@@ -1,0 +1,360 @@
+---
+title: "NEW_Batch"
+author: "Elyas Heidari"
+date: "9/4/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(data.table)
+library(tidyverse)
+library(matrixcalc)
+library(ComplexHeatmap)
+library(visNetwork)
+library(prettyR)
+library(igraph)
+```
+
+#Functions
+```{r}
+graph.vis <-
+  function(graph,
+           directed = F,
+           community = T,
+           betweenness = T,
+           plot = T) {
+    plot_community <- function(graph, community_num) {
+      t <- igraph::V(graph)$community == community_num
+      v <-  igraph::V(graph)[t]
+      layout <- graph$layout
+      l <- matrix(layout[which(t),], nrow = sum(t), byrow = T)
+      sub_graph <- igraph::induced.subgraph(graph, v)
+      igraph::plot.igraph(
+        sub_graph,
+        vertex.size = 2 + 600 / (100 + length(v)),
+        layout = l,
+        main = paste('community', community_num, sep = " "),
+        vertex.frame.color = igraph::V(sub_graph)$color,
+        vertex.label.family = 'Helvetica',
+        vertex.label.dist = -.5,
+        vertex.label.cex = .6,
+        vertex.label.font = 3,
+        vertex.label.color = 'black'
+      )
+    }
+    
+    colrs <- c("#000000", "#FFFF00", "#1CE6FF", "#FF34FF", "#FF4A46", "#008941", "#006FA6", "#A30059",
+               "#FFDBE5", "#7A4900", "#0000A6", "#63FFAC", "#B79762", "#004D43", "#8FB0FF", "#997D87",
+               "#5A0007", "#809693", "#FEFFE6", "#1B4400", "#4FC601", "#3B5DFF", "#4A3B53", "#FF2F80",
+               "#61615A", "#BA0900", "#6B7900", "#00C2A0", "#FFAA92", "#FF90C9", "#B903AA", "#D16100",
+               "#DDEFFF", "#000035", "#7B4F4B", "#A1C299", "#300018", "#0AA6D8", "#013349", "#00846F",
+               "#372101", "#FFB500", "#C2FFED", "#A079BF", "#CC0744", "#C0B9B2", "#C2FF99", "#001E09",
+               "#00489C", "#6F0062", "#0CBD66", "#EEC3FF", "#456D75", "#B77B68", "#7A87A1", "#788D66",
+               "#885578", "#FAD09F", "#FF8A9A", "#D157A0", "#BEC459", "#456648", "#0086ED", "#886F4C",
+               
+               "#34362D", "#B4A8BD", "#00A6AA", "#452C2C", "#636375", "#A3C8C9", "#FF913F", "#938A81",
+               "#575329", "#00FECF", "#B05B6F", "#8CD0FF", "#3B9700", "#04F757", "#C8A1A1", "#1E6E00",
+               "#7900D7", "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600", "#D790FF", "#9B9700",
+               "#549E79", "#FFF69F", "#201625", "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329",
+               "#5B4534", "#FDE8DC", "#404E55", "#0089A3", "#CB7E98", "#A4E804", "#324E72", "#6A3A4C",
+               "#83AB58", "#001C1E", "#D1F7CE", "#004B28", "#C8D0F6", "#A3A489", "#806C66", "#222800",
+               "#BF5650", "#E83000", "#66796D", "#DA007C", "#FF1A59", "#8ADBB4", "#1E0200", "#5B4E51",
+               "#C895C5", "#320033", "#FF6832", "#66E1D3", "#CFCDAC", "#D0AC94", "#7ED379", "#012C58",
+               
+               "#7A7BFF", "#D68E01", "#353339", "#78AFA1", "#FEB2C6", "#75797C", "#837393", "#943A4D",
+               "#B5F4FF", "#D2DCD5", "#9556BD", "#6A714A", "#001325", "#02525F", "#0AA3F7", "#E98176",
+               "#DBD5DD", "#5EBCD1", "#3D4F44", "#7E6405", "#02684E", "#962B75", "#8D8546", "#9695C5",
+               "#E773CE", "#D86A78", "#3E89BE", "#CA834E", "#518A87", "#5B113C", "#55813B", "#E704C4",
+               "#00005F", "#A97399", "#4B8160", "#59738A", "#FF5DA7", "#F7C9BF", "#643127", "#513A01",
+               "#6B94AA", "#51A058", "#A45B02", "#1D1702", "#E20027", "#E7AB63", "#4C6001", "#9C6966",
+               "#64547B", "#97979E", "#006A66", "#391406", "#F4D749", "#0045D2", "#006C31", "#DDB6D0",
+               "#7C6571", "#9FB2A4", "#00D891", "#15A08A", "#BC65E9", "#FFFFFE", "#C6DC99", "#203B3C",
+               
+               "#671190", "#6B3A64", "#F5E1FF", "#FFA0F2", "#CCAA35", "#374527", "#8BB400", "#797868",
+               "#C6005A", "#3B000A", "#C86240", "#29607C", "#402334", "#7D5A44", "#CCB87C", "#B88183",
+               "#AA5199", "#B5D6C3", "#A38469", "#9F94F0", "#A74571", "#B894A6", "#71BB8C", "#00B433",
+               "#789EC9", "#6D80BA", "#953F00", "#5EFF03", "#E4FFFC", "#1BE177", "#BCB1E5", "#76912F",
+               "#003109", "#0060CD", "#D20096", "#895563", "#29201D", "#5B3213", "#A76F42", "#89412E",
+               "#1A3A2A", "#494B5A", "#A88C85", "#F4ABAA", "#A3F3AB", "#00C6C8", "#EA8B66", "#958A9F",
+               "#BDC9D2", "#9FA064", "#BE4700", "#658188", "#83A485", "#453C23", "#47675D", "#3A3F00",
+               "#061203", "#DFFB71", "#868E7E", "#98D058", "#6C8F7D", "#D7BFC2", "#3C3E6E", "#D83D66",
+               
+               "#2F5D9B", "#6C5E46", "#D25B88", "#5B656C", "#00B57F", "#545C46", "#866097", "#365D25",
+               "#252F99", "#00CCFF", "#674E60", "#FC009C", "#92896B")
+    
+    
+    ig <- methods::as(graph, "igraph")
+    
+    if (betweenness) {
+      bt <-
+        sort(igraph::betweenness(ig, igraph::V(ig), directed = directed),
+             decreasing = T)
+    } else {
+      bt <- NULL
+    }
+    community_n <- 1
+    if (community) {
+      fc <- igraph::cluster_louvain(igraph::as.undirected(ig))
+      igraph::V(ig)$community <- igraph::membership(fc)
+      community_n <- length(unique(igraph::V(ig)$community))
+      mark_list <-
+        lapply(c(1:community_n), function(x)
+          igraph::V(ig)[igraph::V(ig)$community == x])
+    } else {
+      mark_list <- NULL
+    }
+    if (community_n <12)
+      colrs <- RColorBrewer::brewer.pal(community_n + 1, "Set3")
+    else {
+      if (community_n + 1 <= length(colrs))
+        colrs <- sample(colrs, community_n + 1)
+      else
+        colrs <- sample(colrs, community_n + 1, replace = T)
+    }
+    igraph::V(ig)$color <- colrs[igraph::V(ig)$community]
+    igraph::V(ig)$label_color <- colrs[community_n + 1]
+    ig$layout <- igraph::layout_nicely(ig)
+    data <- visNetwork::toVisNetworkData(ig)
+    if (community)
+      data$nodes$group <- igraph::V(ig)$community
+    vs <-
+      visNetwork::visNetwork(nodes = data$nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+    if (directed)
+      vs <- vs %>% visNetwork::visEdges(arrows = "to")
+    
+    if (plot)
+      igraph::plot.igraph(
+        ig,
+        vertex.label = "",
+        layout = ig$layout,
+        vertex.size = 2 + 600 / (100 + length(igraph::V(ig))),
+        vertex.color = igraph::V(ig)$color,
+        vertex.frame.color = igraph::V(ig)$color
+      )
+    if (community) {
+      if (plot) {
+        for (i in 1:community_n)
+          plot_community(ig, i)
+      }
+      com <- igraph::V(ig)$community
+      names(com) <- names(igraph::V(ig))
+      list(
+        graph = ig,
+        betweenness = bt,
+        network = vs,
+        communities = com
+      )
+    } else {
+      list(graph = ig,
+           betweenness = bt,
+           network = vs)
+    }
+    
+  }
+
+
+
+ggm1 <- 
+  function(data,
+           methods = c("glasso"),
+           community = TRUE,
+           plot = FALSE,
+           ...) {
+    arguments <- list(...)
+    threshold <- arguments$threshold
+    significance <- arguments$significance
+    rho <- arguments$rho
+
+    if (is.null(threshold))
+      threshold <- 0.05
+
+    if (is.null(significance))
+      significance <- 0.05
+
+    if (is.null(rho))
+      rho = 0.1
+
+    model <- gRim::cmod( ~ . ^ ., data = data)
+    S <- stats::cov.wt (data, method = "ML")$cov
+    PC <- gRbase::cov2pcor(S)
+    othermodels <- list()
+    if ("aic" %in% tolower(methods)) {
+      othermodels$aic <- aic <- gRbase::stepwise(model)
+    }
+    if ("bic" %in% tolower(methods)) {
+      othermodels$bic <- gRbase::stepwise(model, k = log(nrow(data)))
+    }
+    if ("test" %in% tolower(methods)) {
+      othermodels$test <- gRbase::stepwise(model, criterion = "test")
+    }
+    if ("threshold" %in% tolower(methods)) {
+      Z <- abs(PC)
+      Z[Z < threshold] <- 0
+      diag(Z) <- 0
+      Z[Z > 0] <- 1
+      g.thresh <-  methods::as(Z, "graphNEL")
+      thresh <- gRim::cmod(g.thresh, data = data)
+    }
+    if ("sin" %in% tolower(methods)) {
+      psin <- SIN::sinUG(S, n = nrow(data))
+      othermodels$gsin <-
+        methods::as(SIN::getgraph(psin, significance), "graphNEL")
+    }
+    if ("glasso" %in% tolower(methods)) {
+      C <- stats::cov2cor(S)
+      res.lasso <- glasso::glasso(C, rho = rho)
+      AM <- abs(res.lasso$wi) > threshold
+      diag(AM) <- F
+      g.lasso <- methods::as(AM, "graphNEL")
+      graph::nodes(g.lasso) <- colnames(data)
+      othermodels$glasso <- g.lasso
+    }
+    othermodels <- othermodels %>% purrr::map(methods::as, "igraph")
+    commonedges <- do.call(igraph::intersection, othermodels)
+    list(graph = graph.vis(
+      commonedges,
+      community = community,
+      plot = plot,
+      betweenness = T,
+      directed = F
+    ), wi = abs(res.lasso$wi))
+  }
+
+
+dist.matrix <- function(df, m, k){
+  print(dim(df))
+  trans <- matrix.power(t.matrix, k)
+  dist.pair <- function(vec1, vec2){
+    sqrt(sum((vec1 %*% trans - vec2 %*% trans) ^ 2))
+  }
+  to.ret <- 1:dim(df)[2] %>% map(function(x) 1:dim(df)[2] %>% map(function(y) dist.pair(df[,x], df[,y])))
+  to.ret <- unlist(to.ret)
+  matrix(to.ret, nrow = dim(df)[2])
+}
+
+hv.genes <- function(df, n = 100){
+  sds <- apply(df, 1, sd)
+  means <- apply(df, 1, mean)
+  sds <- unlist(sds)
+  means <- unlist(means)
+  lm <- lm(sds~means)
+  sm <- summary(lm)
+  res <- residuals(lm)
+  names(res) <- 1:length(res)
+  down <- tail(order(res), n)
+  down
+}
+
+
+graph.col <- function(graph, lay, grp, sz){
+  igraph::V(graph)$color <- rgb(0, 0, floor(255*(grp^4)/max((grp^4))), maxColorValue=255, alpha=255)
+  v <-  igraph::V(graph)
+  graph <- as.undirected(graph)
+  plot.igraph(
+    graph,
+    vertex.size = sz,
+    layout = lay,
+    vertex.frame.color = igraph::V(graph)$color,
+    vertex.label = ""
+  )
+}
+```
+
+
+```{r}
+# df <- readxl::read_excel("../data/new_batch/GSE61533_HTSEQ_count_results.xls")
+hpf <- read.csv("../data/new_batch/GSE61533_HTSEQ_count_results/Sheet1-Table 1.csv")
+cell_type <- read.table("../data/new_batch/all_cell_types.txt", header = T)
+cell_type <- cell_type[1:10]
+cell_type <- cell_type[,-3]
+is.one <- apply(cell_type, 1, function(x) names(which(x == 1)))
+is.one <- unlist(is.one)
+cell_types <- colnames(cell_types)[which()]
+```
+
+```{r}
+rownames(hpf) <- hpf$ID
+hpf <- hpf[,-1]
+hpf <- muvis::data_preproc(hpf)
+hvg <- hv.genes(hpf, 300)
+df <- hpf[hvg, ]
+
+
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(hpf)), distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+col <- rep("NA", dim(hpf)[2])
+coler <- rbind(col, hpf)
+coler[1,] <- is.one[colnames(hpf)]
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(is.one[colnames(hpf)]))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(is.one[colnames(hpf)]))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(is.one[colnames(hpf)]))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+
+

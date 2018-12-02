@@ -1,0 +1,995 @@
+---
+title: "GRN of Zebrafish"
+author: "Elyas Heidari"
+date: "8/23/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Packages
+```{r packages, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(data.table)
+library(tidyverse)
+library(matrixcalc)
+library(ComplexHeatmap)
+library(visNetwork)
+library(prettyR)
+library(igraph)
+library(destiny)
+library(Matrix)
+```
+
+#Functions
+```{r functions, message=FALSE, warning=FALSE, paged.print=FALSE}
+graph.vis <-
+  function(graph,
+           directed = F,
+           community = T,
+           betweenness = T,
+           plot = T) {
+    plot_community <- function(graph, community_num) {
+      t <- igraph::V(graph)$community == community_num
+      v <-  igraph::V(graph)[t]
+      layout <- graph$layout
+      l <- matrix(layout[which(t),], nrow = sum(t), byrow = T)
+      sub_graph <- igraph::induced.subgraph(graph, v)
+      igraph::plot.igraph(
+        sub_graph,
+        vertex.size = 2 + 600 / (100 + length(v)),
+        layout = l,
+        main = paste('community', community_num, sep = " "),
+        vertex.frame.color = igraph::V(sub_graph)$color,
+        vertex.label.family = 'Helvetica',
+        vertex.label.dist = -.5,
+        vertex.label.cex = .6,
+        vertex.label.font = 3,
+        vertex.label.color = 'black'
+      )
+    }
+    
+    colrs <- c("#000000", "#FFFF00", "#1CE6FF", "#FF34FF", "#FF4A46", "#008941", "#006FA6", "#A30059",
+               "#FFDBE5", "#7A4900", "#0000A6", "#63FFAC", "#B79762", "#004D43", "#8FB0FF", "#997D87",
+               "#5A0007", "#809693", "#FEFFE6", "#1B4400", "#4FC601", "#3B5DFF", "#4A3B53", "#FF2F80",
+               "#61615A", "#BA0900", "#6B7900", "#00C2A0", "#FFAA92", "#FF90C9", "#B903AA", "#D16100",
+               "#DDEFFF", "#000035", "#7B4F4B", "#A1C299", "#300018", "#0AA6D8", "#013349", "#00846F",
+               "#372101", "#FFB500", "#C2FFED", "#A079BF", "#CC0744", "#C0B9B2", "#C2FF99", "#001E09",
+               "#00489C", "#6F0062", "#0CBD66", "#EEC3FF", "#456D75", "#B77B68", "#7A87A1", "#788D66",
+               "#885578", "#FAD09F", "#FF8A9A", "#D157A0", "#BEC459", "#456648", "#0086ED", "#886F4C",
+               
+               "#34362D", "#B4A8BD", "#00A6AA", "#452C2C", "#636375", "#A3C8C9", "#FF913F", "#938A81",
+               "#575329", "#00FECF", "#B05B6F", "#8CD0FF", "#3B9700", "#04F757", "#C8A1A1", "#1E6E00",
+               "#7900D7", "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600", "#D790FF", "#9B9700",
+               "#549E79", "#FFF69F", "#201625", "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329",
+               "#5B4534", "#FDE8DC", "#404E55", "#0089A3", "#CB7E98", "#A4E804", "#324E72", "#6A3A4C",
+               "#83AB58", "#001C1E", "#D1F7CE", "#004B28", "#C8D0F6", "#A3A489", "#806C66", "#222800",
+               "#BF5650", "#E83000", "#66796D", "#DA007C", "#FF1A59", "#8ADBB4", "#1E0200", "#5B4E51",
+               "#C895C5", "#320033", "#FF6832", "#66E1D3", "#CFCDAC", "#D0AC94", "#7ED379", "#012C58",
+               
+               "#7A7BFF", "#D68E01", "#353339", "#78AFA1", "#FEB2C6", "#75797C", "#837393", "#943A4D",
+               "#B5F4FF", "#D2DCD5", "#9556BD", "#6A714A", "#001325", "#02525F", "#0AA3F7", "#E98176",
+               "#DBD5DD", "#5EBCD1", "#3D4F44", "#7E6405", "#02684E", "#962B75", "#8D8546", "#9695C5",
+               "#E773CE", "#D86A78", "#3E89BE", "#CA834E", "#518A87", "#5B113C", "#55813B", "#E704C4",
+               "#00005F", "#A97399", "#4B8160", "#59738A", "#FF5DA7", "#F7C9BF", "#643127", "#513A01",
+               "#6B94AA", "#51A058", "#A45B02", "#1D1702", "#E20027", "#E7AB63", "#4C6001", "#9C6966",
+               "#64547B", "#97979E", "#006A66", "#391406", "#F4D749", "#0045D2", "#006C31", "#DDB6D0",
+               "#7C6571", "#9FB2A4", "#00D891", "#15A08A", "#BC65E9", "#FFFFFE", "#C6DC99", "#203B3C",
+               
+               "#671190", "#6B3A64", "#F5E1FF", "#FFA0F2", "#CCAA35", "#374527", "#8BB400", "#797868",
+               "#C6005A", "#3B000A", "#C86240", "#29607C", "#402334", "#7D5A44", "#CCB87C", "#B88183",
+               "#AA5199", "#B5D6C3", "#A38469", "#9F94F0", "#A74571", "#B894A6", "#71BB8C", "#00B433",
+               "#789EC9", "#6D80BA", "#953F00", "#5EFF03", "#E4FFFC", "#1BE177", "#BCB1E5", "#76912F",
+               "#003109", "#0060CD", "#D20096", "#895563", "#29201D", "#5B3213", "#A76F42", "#89412E",
+               "#1A3A2A", "#494B5A", "#A88C85", "#F4ABAA", "#A3F3AB", "#00C6C8", "#EA8B66", "#958A9F",
+               "#BDC9D2", "#9FA064", "#BE4700", "#658188", "#83A485", "#453C23", "#47675D", "#3A3F00",
+               "#061203", "#DFFB71", "#868E7E", "#98D058", "#6C8F7D", "#D7BFC2", "#3C3E6E", "#D83D66",
+               
+               "#2F5D9B", "#6C5E46", "#D25B88", "#5B656C", "#00B57F", "#545C46", "#866097", "#365D25",
+               "#252F99", "#00CCFF", "#674E60", "#FC009C", "#92896B")
+    
+    
+    ig <- methods::as(graph, "igraph")
+    
+    if (betweenness) {
+      bt <-
+        sort(igraph::betweenness(ig, igraph::V(ig), directed = directed),
+             decreasing = T)
+    } else {
+      bt <- NULL
+    }
+    community_n <- 1
+    if (community) {
+      fc <- igraph::cluster_louvain(igraph::as.undirected(ig))
+      igraph::V(ig)$community <- igraph::membership(fc)
+      community_n <- length(unique(igraph::V(ig)$community))
+      mark_list <-
+        lapply(c(1:community_n), function(x)
+          igraph::V(ig)[igraph::V(ig)$community == x])
+    } else {
+      mark_list <- NULL
+    }
+    if (community_n <12)
+      colrs <- RColorBrewer::brewer.pal(community_n + 1, "Set3")
+    else {
+      if (community_n + 1 <= length(colrs))
+        colrs <- sample(colrs, community_n + 1)
+      else
+        colrs <- sample(colrs, community_n + 1, replace = T)
+    }
+    igraph::V(ig)$color <- colrs[igraph::V(ig)$community]
+    igraph::V(ig)$label_color <- colrs[community_n + 1]
+    ig$layout <- igraph::layout_nicely(ig)
+    data <- visNetwork::toVisNetworkData(ig)
+    if (community)
+      data$nodes$group <- igraph::V(ig)$community
+    vs <-
+      visNetwork::visNetwork(nodes = data$nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+    if (directed)
+      vs <- vs %>% visNetwork::visEdges(arrows = "to")
+    
+    if (plot)
+      igraph::plot.igraph(
+        ig,
+        vertex.label = "",
+        layout = ig$layout,
+        vertex.size = 2 + 600 / (100 + length(igraph::V(ig))),
+        vertex.color = igraph::V(ig)$color,
+        vertex.frame.color = igraph::V(ig)$color
+      )
+    if (community) {
+      if (plot) {
+        for (i in 1:community_n)
+          plot_community(ig, i)
+      }
+      com <- igraph::V(ig)$community
+      names(com) <- names(igraph::V(ig))
+      list(
+        graph = ig,
+        betweenness = bt,
+        network = vs,
+        communities = com
+      )
+    } else {
+      list(graph = ig,
+           betweenness = bt,
+           network = vs)
+    }
+    
+  }
+
+
+
+ggm1 <- 
+  function(data,
+           methods = c("glasso"),
+           community = TRUE,
+           plot = FALSE,
+           ...) {
+    arguments <- list(...)
+    threshold <- arguments$threshold
+    significance <- arguments$significance
+    rho <- arguments$rho
+
+    if (is.null(threshold))
+      threshold <- 0.05
+
+    if (is.null(significance))
+      significance <- 0.05
+
+    if (is.null(rho))
+      rho = 0.1
+
+    model <- gRim::cmod( ~ . ^ ., data = data)
+    S <- stats::cov.wt (data, method = "ML")$cov
+    PC <- gRbase::cov2pcor(S)
+    othermodels <- list()
+    if ("aic" %in% tolower(methods)) {
+      othermodels$aic <- aic <- gRbase::stepwise(model)
+    }
+    if ("bic" %in% tolower(methods)) {
+      othermodels$bic <- gRbase::stepwise(model, k = log(nrow(data)))
+    }
+    if ("test" %in% tolower(methods)) {
+      othermodels$test <- gRbase::stepwise(model, criterion = "test")
+    }
+    if ("threshold" %in% tolower(methods)) {
+      Z <- abs(PC)
+      Z[Z < threshold] <- 0
+      diag(Z) <- 0
+      Z[Z > 0] <- 1
+      g.thresh <-  methods::as(Z, "graphNEL")
+      thresh <- gRim::cmod(g.thresh, data = data)
+    }
+    if ("sin" %in% tolower(methods)) {
+      psin <- SIN::sinUG(S, n = nrow(data))
+      othermodels$gsin <-
+        methods::as(SIN::getgraph(psin, significance), "graphNEL")
+    }
+    if ("glasso" %in% tolower(methods)) {
+      C <- stats::cov2cor(S)
+      res.lasso <- glasso::glasso(C, rho = rho)
+      AM <- abs(res.lasso$wi) > threshold
+      diag(AM) <- F
+      g.lasso <- methods::as(AM, "graphNEL")
+      graph::nodes(g.lasso) <- colnames(data)
+      othermodels$glasso <- g.lasso
+    }
+    othermodels <- othermodels %>% purrr::map(methods::as, "igraph")
+    commonedges <- do.call(igraph::intersection, othermodels)
+    list(graph = graph.vis(
+      commonedges,
+      community = community,
+      plot = plot,
+      betweenness = T,
+      directed = F
+    ), wi = abs(res.lasso$wi))
+  }
+
+dist.matrix <- function(df, m, k){
+  trans <- matrix.power(t.matrix, k)
+  dist.pair <- function(vec1, vec2){
+    sqrt(sum((vec1 %*% trans - vec2 %*% trans) ^ 2))
+  }
+  to.ret <- 1:dim(df)[2] %>% map(function(x) 1:dim(df)[2] %>% map(function(y) dist.pair(df[,x], df[,y])))
+  to.ret <- unlist(to.ret)
+  matrix(to.ret, nrow = dim(df)[2])
+}
+
+hv.genes <- function(df, n = 100){
+  sds <- apply(df, 1, sd)
+  means <- apply(df, 1, mean)
+  sds <- unlist(sds)
+  means <- unlist(means)
+  lm <- lm(sds~means)
+  sm <- summary(lm)
+  res <- residuals(lm)
+  names(res) <- 1:length(res)
+  down <- tail(order(res), n)
+  down
+}
+
+
+graph.col <- function(graph, lay, grp, sz){
+  igraph::V(graph)$color <- rgb(0, 0, floor(255*(grp^4)/max((grp^4))), maxColorValue=255, alpha=255)
+  v <-  igraph::V(graph)
+  graph <- as.undirected(graph)
+  plot.igraph(
+    graph,
+    vertex.size = sz,
+    layout = lay,
+    vertex.frame.color = igraph::V(graph)$color,
+    vertex.label = ""
+  )
+}
+```
+
+# Data Preprocessing
+```{r preproc1, metadata_clusters, message=FALSE, warning=FALSE, paged.print=FALSE}
+# nc: neural crest
+# pa: pharyngeal arch
+cluster_meta_data <- read.csv("../data/metadata/clusters/GSE112294_ClusterNames.csv")
+nc.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "neural crest"))]
+pa.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "pharyngeal arch"))]
+sp.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "spinal cord"))]
+sm.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "mesoderm") & grepl(x = cluster_meta_data$ClusterName, pattern = "lateral"))]
+ms.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "muscle"))]
+gl.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "germline"))]
+ed.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "epidermal"))]
+en.ids <- cluster_meta_data$ClusterID[which(grepl(x = cluster_meta_data$ClusterName, pattern = "endoderm"))]
+ids <- c(nc.ids, pa.ids, sp.ids, sm.ids, ms.ids, gl.ids, ed.ids, en.ids)
+```
+
+```{r preproc2, batches_subsampling, message=FALSE, warning=FALSE, paged.print=FALSE}
+hpf08_clust <- scan("../data/raw_data/GSE112294_RAW/GSM3067191_08hpf_clustID.txt")
+hpf10_clust <- scan("../data/raw_data/GSE112294_RAW/GSM3067192_10hpf_clustID.txt")
+hpf14_clust <- scan("../data/raw_data/GSE112294_RAW/GSM3067193_14hpf_clustID.txt")
+hpf18_clust <- scan("../data/raw_data/GSE112294_RAW/GSM3067194_18hpf_clustID.txt")
+hpf24_clust <- scan("../data/raw_data/GSE112294_RAW/GSM3067195_24hpf_clustID.txt")
+hpf_clust <- c(hpf08_clust, hpf10_clust, hpf14_clust, hpf18_clust, hpf24_clust)
+hpf08.read <- which(hpf08_clust %in% ids)
+hpf10.read <- which(hpf10_clust %in% ids)
+hpf14.read <- which(hpf14_clust %in% ids)
+hpf18.read <- which(hpf18_clust %in% ids)
+hpf24.read <- which(hpf24_clust %in% ids)
+
+hpf_nc <- which(hpf_clust %in% nc.ids)
+hpf_pa <- which(hpf_clust %in% pa.ids)
+hpf_sp <- which(hpf_clust %in% sp.ids)
+hpf_sm <- which(hpf_clust %in% sm.ids)
+hpf_ms <- which(hpf_clust %in% ms.ids)
+hpf_gl <- which(hpf_clust %in% gl.ids)
+hpf_ed <- which(hpf_clust %in% ed.ids)
+hpf_en <- which(hpf_clust %in% en.ids)
+hpf_id <- c(hpf_nc, hpf_pa, hpf_sp, hpf_sm, hpf_ms, hpf_gl, hpf_ed, hpf_en)
+```
+
+
+```{r preproc3, message=FALSE, warning=FALSE, paged.print=FALSE}
+hpf08 <- fread("../data/raw_data/GSE112294_RAW/GSM3067191_08hpf.csv")
+hpf08 <- data.frame(hpf08)
+hpf08 <- hpf08[,-1]
+# hpf08 <- hpf08[,hpf08.read]
+hpf10 <- fread("../data/raw_data/GSE112294_RAW/GSM3067192_10hpf.csv")
+hpf10 <- data.frame(hpf10)
+hpf10 <- hpf10[,-1]
+# hpf10 <- hpf10[,hpf10.read]
+hpf14 <- fread("../data/raw_data/GSE112294_RAW/GSM3067193_14hpf.csv")
+hpf14 <- data.frame(hpf14)
+hpf14 <- hpf14[,-1]
+# hpf14 <- hpf14[,hpf14.read]
+hpf18 <- fread("../data/raw_data/GSE112294_RAW/GSM3067194_18hpf.csv")
+hpf18 <- data.frame(hpf18)
+hpf18 <- hpf18[,-1]
+# hpf18 <- hpf18[,hpf18.read]
+hpf24 <- fread("../data/raw_data/GSE112294_RAW/GSM3067195_24hpf.csv")
+hpf24 <- data.frame(hpf24)
+hpf24 <- hpf24[,-1]
+# hpf24 <- hpf24[,hpf24.read]
+
+hpf <- do.call(cbind, list(hpf08, hpf10, hpf14, hpf18, hpf24))
+# hpf <- hpf[,hpf_id]
+rm(hpf08)
+rm(hpf10)
+rm(hpf14)
+rm(hpf18)
+rm(hpf24)
+rm(hpf_clust)
+```
+# GRN of Highly Varibale Genes as Transition Matrix
+
+## Highly Variable Genes
+```{r hvg, message=FALSE, warning=FALSE, paged.print=FALSE}
+hvg <- hv.genes(hpf, 300)
+df <- hpf[hvg, ]
+
+
+# rm(hpf)
+```
+
+## Diffusion Map with Euclidean Distance
+
+```{r euc, message=FALSE, warning=FALSE, paged.print=FALSE}
+# d.matrix <- dist(t(hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])]), method = "euclidean")
+
+# d.matrix <- dist(t(hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])]), method = "euclidean")
+# write.csv(as.matrix(d.matrix), "../results/euc_all.csv")
+d.matrix <- read.csv("../results/euc_all.csv", row.names = 1)
+# heat.map <- Heatmap(
+#   as.matrix(d.matrix),
+#   name = "euclidean distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  +
+#   Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = data.frame(covar = c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), distance = as.dist(d.matrix))))
+rm(d.matrix)
+
+# dm <- DiffusionMap(data = data.frame(covar = c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))), distance = as.dist(d.matrix))
+
+plot.DiffusionMap(dm, col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# plot.DiffusionMap(dm, col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+```
+
+
+
+```{r coloring, message=FALSE, warning=FALSE, paged.print=FALSE}
+df_temp <- data.matrix(df)
+df_temp <- ifelse(df_temp > 0, 1, 0)
+df_temp <- data.frame(df_temp)
+sp.df <- df_temp[,hpf_sp]
+nc.df <- df_temp[,hpf_nc]
+pa.df <- df_temp[,hpf_pa]
+sm.df <- df_temp[,hpf_sm]
+ms.df <- df_temp[,hpf_ms]
+gl.df <- df_temp[,hpf_gl]
+ed.df <- df_temp[,hpf_ed]
+en.df <- df_temp[,hpf_en]
+
+sp_groups <- apply(sp.df, 1, mean)
+sp_size <- apply(sp.df, 1, function(x) (1/1+(sd(x)))^4)
+nc_groups <- apply(nc.df, 1, mean)
+nc_size <- apply(nc.df, 1, function(x) (1/1+(sd(x)))^4)
+pa_groups <- apply(pa.df, 1, mean)
+pa_size <- apply(pa.df, 1, function(x) (1/1+(sd(x)))^4)
+sm_groups <- apply(sm.df, 1, mean)
+sm_size <- apply(sm.df, 1, function(x) (1/1+(sd(x)))^4)
+gl_groups <- apply(gl.df, 1, mean)
+gl_size <- apply(gl.df, 1, function(x) (1/1+(sd(x)))^4)
+ed_groups <- apply(ed.df, 1, mean)
+ed_size <- apply(ed.df, 1, function(x) (1/1+(sd(x)))^4)
+en_groups <- apply(en.df, 1, mean)
+en_size <- apply(en.df, 1, function(x) (1/1+(sd(x)))^4)
+```
+
+
+## GGM as GRN (tasks 2, 3, 6)
+
+### rho = 0.05
+```{r rho0.05, message=FALSE, warning=FALSE, paged.print=FALSE}
+g <- ggm1(data = data.frame(t(df)), rho = 0.3)
+l <- g$graph$graph
+t.matrix <- g$wi
+write.csv(t.matrix, "../data/adj_Shayan.csv")
+write.csv(df[,c(hpf_sp, hpf_nc, hpf_pa, hpf_sm)], "../data/data_Shayan.csv")
+df <- data.frame(id = c(hpf_sp, hpf_nc, hpf_pa, hpf_sm), class = c(rep("spinal chord", length(hpf_sp)), rep("neural crest", length(hpf_nc)),rep("pharyngal arch", length(hpf_pa)),rep("somatic meso", length(hpf_sm))))
+write.csv(df, "../data/classes.csv")
+
+
+
+emb <- read.csv("/Users/elihei/Downloads/graph_embedding2.csv", row.names = 1, header = T)
+
+embs <- Rtsne::Rtsne(dist(emb), dims = 2, perplexity = 30, pca = TRUE, max_iter = 1000, is_distance = T)
+
+dist(emb)
+
+plot(embs$Y, col = factor(df$class))
+  
+
+
+
+t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+d.matrix <- dist.matrix(hpf[hvg, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 10)
+
+# d.matrix <- dist.matrix(df[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], m = 1, k = 5)
+
+# write.csv(as.matrix(d.matrix), "../results/ggm_rho005_all.csv")
+d.matrix <- read.csv("../results/ggm_rho005_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+
+### rho = 0.1
+```{r rho0.1, message=FALSE, warning=FALSE, paged.print=FALSE}
+g <- ggm1(data = data.frame(t(df)), rho = 0.1)
+# g$graph$network
+l <- g$graph$graph
+t.matrix <- g$wi
+t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+# d.matrix <- dist.matrix(df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+
+# d.matrix <- dist.matrix(df[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], m = 1, k = 5)
+# write.csv(as.matrix(d.matrix), "../results/ggm_rho01_all.csv")
+d.matrix <- read.csv("../results/ggm_rho01_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("germline", 30),
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400),
+#   rep("epidermal", 400),
+#   rep("endoderm", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+dm <- DiffusionMap(data = hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+
+### rho = 0.2
+```{r rho0.2, message=FALSE, warning=FALSE, paged.print=FALSE}
+genes <- sample(1:dim(hpf)[1], 1000)
+outs <- which(rowSds(hpf[genes,]) == 0)
+genes <- genes[-outs]
+g <- ggm1(data = data.frame(t(hpf[genes,])), rho = 0.05)
+# g$graph$network
+l <- g$graph$graph
+
+t.matrix <- abs(g$wi)
+t.matrix <- ifelse(t.matrix > 0.05, t.matrix, 0)
+diag(t.matrix) <- 0
+t.matrix <- data.frame(t.matrix)
+outs <- which(colSums(t.matrix, na.rm = T) == 0)
+t.matrix <- t.matrix[-outs, -outs]
+hvg <- hvg[-outs]
+t.matrix <- t(scale(t.matrix, center=FALSE, scale=colSums(t.matrix)))
+
+# t.matrix <- g$wi
+# t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+# d.matrix <- dist.matrix(df[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], m = 1, k = 5)
+
+d.matrix <- dist.matrix(hpf[hvg, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+# 
+# 
+write.csv(as.matrix(d.matrix), "../results/Fucking_ggm.csv")
+d.matrix <- read.csv("../results/ggm_rho02_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("germline", 30),
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400),
+#   rep("epidermal", 400),
+#   rep("endoderm", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+
+### rho = 0.3
+```{r rho0.3, message=FALSE, warning=FALSE, paged.print=FALSE}
+g <- ggm1(data = data.frame(t(df)), rho = 0.3)
+# g$graph$network
+l <- g$graph$graph
+t.matrix <- g$wi
+t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+
+# d.matrix <- dist.matrix(df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+# 
+# # d.matrix <- dist.matrix(df[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], m = 1, k = 5)
+# write.csv(as.matrix(d.matrix), "../results/ggm_rho03_all.csv")
+d.matrix <- read.csv("../results/ggm_rho03_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("germline", 30),
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400),
+#   rep("epidermal", 400),
+#   rep("endoderm", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+### rho = 0.2
+```{r rho_ggm, message=FALSE, warning=FALSE, paged.print=FALSE}
+hvg <- hv.genes(hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], 300)
+df <- hpf[hvg, ]
+g <- ggm1(data = data.frame(t(hpf[hvg, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])])), rho = 0.2)
+# g$graph$network
+l <- g$graph$graph
+t.matrix <- g$wi
+t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+
+# d.matrix <- dist.matrix(df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+# 
+d.matrix <- dist.matrix(df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+write.csv(as.matrix(d.matrix), "../results/ggm_rho_all.csv")
+d.matrix <- read.csv("../results/ggm_rho_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("germline", 30),
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400),
+#   rep("epidermal", 400),
+#   rep("endoderm", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+
+
+### rho = 0.3
+```{r rho0.3, message=FALSE, warning=FALSE, paged.print=FALSE}
+g <- ggm1(data = data.frame(t(df)), rho = 0.3)
+# g$graph$network
+l <- g$graph$graph
+t.matrix <- g$wi
+t.matrix <- scale(t.matrix, center=FALSE, scale=colSums(t.matrix))
+
+
+# d.matrix <- dist.matrix(df[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], m = 1, k = 5)
+# 
+# # d.matrix <- dist.matrix(df[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], m = 1, k = 5)
+# write.csv(as.matrix(d.matrix), "../results/ggm_rho03_all.csv")
+d.matrix <- read.csv("../results/ggm_rho03_all.csv", row.names = 1)
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = T,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("germline", 30),
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400),
+#   rep("epidermal", 400),
+#   rep("endoderm", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+
+# heat.map <- Heatmap(
+#   d.matrix,
+#   name = "distance",
+#   km = 1,
+#   show_row_names = F,
+#   show_column_names = F,
+#   cluster_rows = T
+#   )  + Heatmap(c(
+#   rep("spinal cord", 400),
+#   rep("neural crest", 400),
+#   rep("pharyngeal arch", 400),
+#   rep("somatic meso", 400)
+#   ),
+#   name = "clusters",
+#   width = unit(5, "mm"))
+# 
+# heat.map
+# rm(heat.map)
+
+dm <- DiffusionMap(data = hpf[, c(hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400])], distance = as.dist(d.matrix))
+
+dpt <- DPT(dm)
+
+plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400))))
+
+# dm <- DiffusionMap(data = hpf[, c(hpf_gl[1:30], hpf_sp[1:400], hpf_nc[1:400], hpf_pa[1:400], hpf_sm[1:400], hpf_ed[1:400], hpf_en[1:400])], distance = as.dist(d.matrix))
+# 
+# dpt <- DPT(dm)
+# 
+# plot.DPT(dpt, dcs = c(1, 2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(1, 2), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+# plot.DPT(dpt, dcs = c(2, 3), col = factor(c(rep("germline", 30), rep("spinal cord", 400), rep("neural crest", 400), rep("pharyngeal arch", 400), rep("somatic meso", 400), rep("epidermal", 400), rep("endoderm", 400))))
+
+
+lay <- layout_nicely(l)
+# Germline
+graph.col(graph = l, lay= lay, grp = (as.numeric(gl_groups) + 1), sz = gl_size)
+# Epidermal
+graph.col(graph = l, lay= lay, grp = (as.numeric(ed_groups) + 1), sz = ed_size)
+# Endoderm
+graph.col(graph = l, lay= lay, grp = (as.numeric(en_groups) + 1), sz = en_size)
+# Somatic Meso
+graph.col(graph = l, lay= lay, grp = (as.numeric(sm_groups) + 1), sz = sm_size)
+# Spinal Cord
+graph.col(graph = l, lay= lay, grp = (as.numeric(sp_groups) + 1), sz = sp_size)
+# Neural Crest
+graph.col(graph = l, lay= lay, grp = (as.numeric(nc_groups) + 1), sz = nc_size)
+# Pharyngeal Arch
+graph.col(graph = l, lay= lay, grp = (as.numeric(pa_groups) + 1), sz = pa_size)
+```
+
+```{r}
+eigen(t.matrix)
+```
+
+
+

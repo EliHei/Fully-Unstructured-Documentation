@@ -1,0 +1,696 @@
+---
+title: "scRNA GRN"
+author: "Elyas Heidari"
+date: "9/10/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(data.table)
+library(destiny)
+library(tidyverse)
+library(matrixcalc)
+library(ComplexHeatmap)
+library(visNetwork)
+library(prettyR)
+library(igraph)
+library(destiny)
+library(muvis)
+library(limma)
+library(biomaRt)
+library(ggplot2)
+library(data.table)
+library(glmnet)
+library(caret)
+library(randomForest)
+library(doParallel)
+registerDoParallel(3)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+graph.vis <-
+  function(graph,
+           directed = F,
+           community = T,
+           betweenness = T,
+           plot = T) {
+    plot_community <- function(graph, community_num) {
+      t <- igraph::V(graph)$community == community_num
+      v <-  igraph::V(graph)[t]
+      layout <- graph$layout
+      l <- matrix(layout[which(t),], nrow = sum(t), byrow = T)
+      sub_graph <- igraph::induced.subgraph(graph, v)
+      igraph::plot.igraph(
+        sub_graph,
+        vertex.size = 2 + 600 / (100 + length(v)),
+        layout = l,
+        main = paste('community', community_num, sep = " "),
+        vertex.frame.color = igraph::V(sub_graph)$color,
+        vertex.label.family = 'Helvetica',
+        vertex.label.dist = -.5,
+        vertex.label.cex = .6,
+        vertex.label.font = 3,
+        vertex.label.color = 'black'
+      )
+    }
+    
+    colrs <- c("#000000", "#FFFF00", "#1CE6FF", "#FF34FF", "#FF4A46", "#008941", "#006FA6", "#A30059",
+               "#FFDBE5", "#7A4900", "#0000A6", "#63FFAC", "#B79762", "#004D43", "#8FB0FF", "#997D87",
+               "#5A0007", "#809693", "#FEFFE6", "#1B4400", "#4FC601", "#3B5DFF", "#4A3B53", "#FF2F80",
+               "#61615A", "#BA0900", "#6B7900", "#00C2A0", "#FFAA92", "#FF90C9", "#B903AA", "#D16100",
+               "#DDEFFF", "#000035", "#7B4F4B", "#A1C299", "#300018", "#0AA6D8", "#013349", "#00846F",
+               "#372101", "#FFB500", "#C2FFED", "#A079BF", "#CC0744", "#C0B9B2", "#C2FF99", "#001E09",
+               "#00489C", "#6F0062", "#0CBD66", "#EEC3FF", "#456D75", "#B77B68", "#7A87A1", "#788D66",
+               "#885578", "#FAD09F", "#FF8A9A", "#D157A0", "#BEC459", "#456648", "#0086ED", "#886F4C",
+               
+               "#34362D", "#B4A8BD", "#00A6AA", "#452C2C", "#636375", "#A3C8C9", "#FF913F", "#938A81",
+               "#575329", "#00FECF", "#B05B6F", "#8CD0FF", "#3B9700", "#04F757", "#C8A1A1", "#1E6E00",
+               "#7900D7", "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600", "#D790FF", "#9B9700",
+               "#549E79", "#FFF69F", "#201625", "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329",
+               "#5B4534", "#FDE8DC", "#404E55", "#0089A3", "#CB7E98", "#A4E804", "#324E72", "#6A3A4C",
+               "#83AB58", "#001C1E", "#D1F7CE", "#004B28", "#C8D0F6", "#A3A489", "#806C66", "#222800",
+               "#BF5650", "#E83000", "#66796D", "#DA007C", "#FF1A59", "#8ADBB4", "#1E0200", "#5B4E51",
+               "#C895C5", "#320033", "#FF6832", "#66E1D3", "#CFCDAC", "#D0AC94", "#7ED379", "#012C58",
+               
+               "#7A7BFF", "#D68E01", "#353339", "#78AFA1", "#FEB2C6", "#75797C", "#837393", "#943A4D",
+               "#B5F4FF", "#D2DCD5", "#9556BD", "#6A714A", "#001325", "#02525F", "#0AA3F7", "#E98176",
+               "#DBD5DD", "#5EBCD1", "#3D4F44", "#7E6405", "#02684E", "#962B75", "#8D8546", "#9695C5",
+               "#E773CE", "#D86A78", "#3E89BE", "#CA834E", "#518A87", "#5B113C", "#55813B", "#E704C4",
+               "#00005F", "#A97399", "#4B8160", "#59738A", "#FF5DA7", "#F7C9BF", "#643127", "#513A01",
+               "#6B94AA", "#51A058", "#A45B02", "#1D1702", "#E20027", "#E7AB63", "#4C6001", "#9C6966",
+               "#64547B", "#97979E", "#006A66", "#391406", "#F4D749", "#0045D2", "#006C31", "#DDB6D0",
+               "#7C6571", "#9FB2A4", "#00D891", "#15A08A", "#BC65E9", "#FFFFFE", "#C6DC99", "#203B3C",
+               
+               "#671190", "#6B3A64", "#F5E1FF", "#FFA0F2", "#CCAA35", "#374527", "#8BB400", "#797868",
+               "#C6005A", "#3B000A", "#C86240", "#29607C", "#402334", "#7D5A44", "#CCB87C", "#B88183",
+               "#AA5199", "#B5D6C3", "#A38469", "#9F94F0", "#A74571", "#B894A6", "#71BB8C", "#00B433",
+               "#789EC9", "#6D80BA", "#953F00", "#5EFF03", "#E4FFFC", "#1BE177", "#BCB1E5", "#76912F",
+               "#003109", "#0060CD", "#D20096", "#895563", "#29201D", "#5B3213", "#A76F42", "#89412E",
+               "#1A3A2A", "#494B5A", "#A88C85", "#F4ABAA", "#A3F3AB", "#00C6C8", "#EA8B66", "#958A9F",
+               "#BDC9D2", "#9FA064", "#BE4700", "#658188", "#83A485", "#453C23", "#47675D", "#3A3F00",
+               "#061203", "#DFFB71", "#868E7E", "#98D058", "#6C8F7D", "#D7BFC2", "#3C3E6E", "#D83D66",
+               
+               "#2F5D9B", "#6C5E46", "#D25B88", "#5B656C", "#00B57F", "#545C46", "#866097", "#365D25",
+               "#252F99", "#00CCFF", "#674E60", "#FC009C", "#92896B")
+    
+    
+    ig <- methods::as(graph, "igraph")
+    
+    if (betweenness) {
+      bt <-
+        sort(igraph::betweenness(ig, igraph::V(ig), directed = directed),
+             decreasing = T)
+    } else {
+      bt <- NULL
+    }
+    community_n <- 1
+    if (community) {
+      fc <- igraph::cluster_louvain(igraph::as.undirected(ig))
+      igraph::V(ig)$community <- igraph::membership(fc)
+      community_n <- length(unique(igraph::V(ig)$community))
+      mark_list <-
+        lapply(c(1:community_n), function(x)
+          igraph::V(ig)[igraph::V(ig)$community == x])
+    } else {
+      mark_list <- NULL
+    }
+    if (community_n <12)
+      colrs <- RColorBrewer::brewer.pal(community_n + 1, "Set3")
+    else {
+      if (community_n + 1 <= length(colrs))
+        colrs <- sample(colrs, community_n + 1)
+      else
+        colrs <- sample(colrs, community_n + 1, replace = T)
+    }
+    igraph::V(ig)$color <- colrs[igraph::V(ig)$community]
+    igraph::V(ig)$label_color <- colrs[community_n + 1]
+    ig$layout <- igraph::layout_nicely(ig)
+    data <- visNetwork::toVisNetworkData(ig)
+    if (community)
+      data$nodes$group <- igraph::V(ig)$community
+    vs <-
+      visNetwork::visNetwork(nodes = data$nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+    if (directed)
+      vs <- vs %>% visNetwork::visEdges(arrows = "to")
+    
+    if (plot)
+      igraph::plot.igraph(
+        ig,
+        vertex.label = "",
+        layout = ig$layout,
+        vertex.size = 2 + 600 / (100 + length(igraph::V(ig))),
+        vertex.color = igraph::V(ig)$color,
+        vertex.frame.color = igraph::V(ig)$color
+      )
+    if (community) {
+      if (plot) {
+        for (i in 1:community_n)
+          plot_community(ig, i)
+      }
+      com <- igraph::V(ig)$community
+      names(com) <- names(igraph::V(ig))
+      list(
+        graph = ig,
+        betweenness = bt,
+        network = vs,
+        communities = com
+      )
+    } else {
+      list(graph = ig,
+           betweenness = bt,
+           network = vs)
+    }
+    
+  }
+
+
+
+ggm1 <- 
+  function(data,
+           methods = c("glasso"),
+           community = TRUE,
+           plot = FALSE,
+           ...) {
+    arguments <- list(...)
+    threshold <- arguments$threshold
+    significance <- arguments$significance
+    rho <- arguments$rho
+
+    if (is.null(threshold))
+      threshold <- 0.05
+
+    if (is.null(significance))
+      significance <- 0.05
+
+    if (is.null(rho))
+      rho = 0.1
+
+    # model <- gRim::cmod( ~ . ^ ., data = data)
+    S <- stats::cov.wt (data, method = "ML")$cov
+    PC <- gRbase::cov2pcor(S)
+    othermodels <- list()
+    if ("aic" %in% tolower(methods)) {
+      othermodels$aic <- aic <- gRbase::stepwise(model)
+    }
+    if ("bic" %in% tolower(methods)) {
+      othermodels$bic <- gRbase::stepwise(model, k = log(nrow(data)))
+    }
+    if ("test" %in% tolower(methods)) {
+      othermodels$test <- gRbase::stepwise(model, criterion = "test")
+    }
+    if ("threshold" %in% tolower(methods)) {
+      Z <- abs(PC)
+      Z[Z < threshold] <- 0
+      diag(Z) <- 0
+      Z[Z > 0] <- 1
+      g.thresh <-  methods::as(Z, "graphNEL")
+      thresh <- gRim::cmod(g.thresh, data = data)
+      othermodels$thresh <- thresh
+    }
+    if ("sin" %in% tolower(methods)) {
+      psin <- SIN::sinUG(S, n = nrow(data))
+      othermodels$gsin <-
+        methods::as(SIN::getgraph(psin, significance), "graphNEL")
+    }
+    if ("glasso" %in% tolower(methods)) {
+      C <- stats::cov2cor(S)
+      res.lasso <- glasso::glasso(C, rho = rho)
+      AM <- abs(res.lasso$wi) > threshold
+      diag(AM) <- F
+      g.lasso <- methods::as(AM, "graphNEL")
+      graph::nodes(g.lasso) <- colnames(data)
+      othermodels$glasso <- g.lasso
+    }
+    othermodels <- othermodels %>% purrr::map(methods::as, "igraph")
+    commonedges <- do.call(igraph::intersection, othermodels)
+    list(graph = graph.vis(
+      commonedges,
+      community = community,
+      plot = plot,
+      betweenness = T,
+      directed = F
+    ), wi = res.lasso$wi)
+  }
+
+
+hv.genes <- function(df, n = 100){
+  sds <- apply(df, 1, sd)
+  means <- apply(df, 1, mean)
+  sds <- unlist(sds)
+  means <- unlist(means)
+  lm <- lm(sds~means)
+  sm <- summary(lm)
+  res <- residuals(lm)
+  names(res) <- 1:length(res)
+  down <- tail(order(res), n)
+  down
+}
+
+
+graph.col <- function(graph, lay, grp, sz){
+  igraph::V(graph)$color <- rgb(0, 0, floor(255*(grp^4)/max((grp^4))), maxColorValue=255, alpha=255)
+  v <-  igraph::V(graph)
+  graph <- as.undirected(graph)
+  plot.igraph(
+    graph,
+    vertex.size = sz,
+    layout = lay,
+    vertex.frame.color = igraph::V(graph)$color,
+    vertex.label = ""
+  )
+}
+
+
+
+dist.matrix <- function(df, m, k){
+  trans <- matrix.power(t.matrix, k)
+  dist.pair <- function(vec1, vec2){
+    sqrt(sum((vec1 %*% trans - vec2 %*% trans) ^ 2))
+  }
+  to.ret <- 1:dim(df)[2] %>% map(function(x) 1:dim(df)[2] %>% map(function(y) dist.pair(df[,x], df[,y])))
+  to.ret <- unlist(to.ret)
+  matrix(to.ret, nrow = dim(df)[2])
+}
+
+
+normalize <- function(x){
+  l <- log(x + 1)
+  l <- l / sqrt(sum(l^2, na.rm = T))
+  l
+}
+
+
+df.proc <- function(df){
+  print(rownames(df))
+  rownames(df) <- df$cell_id
+  df <- df[,-c(1,2,3,4,5)]
+  t(df)
+}
+```
+
+
+```{r cars, message=FALSE, warning=FALSE, paged.print=FALSE}
+tusi_files <- list.files("../data/tusi/GSE89754_RAW/")
+tusi_files <- tusi_files %>% map(function(x) fread(paste0("../data/tusi/GSE89754_RAW/", x)))
+tusi_files <- tusi_files[1:3]
+tusi_files <- tusi_files %>% map(df.proc)
+tusi <- Reduce(cbind, tusi_files[1:3])
+rm(tusi_files)
+rownames(tusi) <- strsplit2(rownames(tusi), ";")[,1]
+tusi_bbm <- df.proc(tusi_bbm)
+rownames(tusi_bbm) <- strsplit2(rownames(tusi_bbm), ";")[,1]
+
+
+ido <- read.table("../data/Ido_data/GSE72857_umitab.txt")
+clusters <- read.csv("/Users/elihei/Downloads/Ido_data/MAP.csv", header = F)
+rownames(clusters) <- clusters$V1
+meta_data <- fread("/Users/elihei/Downloads/Ido_data/GSE72857_experimental_design.txt", skip = 19, header = T)
+meta_data <- data.frame(meta_data)
+rownames(meta_data) <- meta_data$Well_ID
+rownames(ido) <- strsplit2(rownames(ido), ";")[,1]
+
+
+
+
+hpf <- read.table("/Users/elihei/Downloads/coordinates_gene_counts_flow_cytometry.txt", header = T)
+rownames(hpf) <- hpf$cell.Name
+hpf <- hpf[,15:dim(hpf)[2]]
+hpf <- t(hpf)
+hpf <- data.frame(hpf)
+cell_types <- strsplit2(colnames(hpf), "_")[,1]
+htseq <- hpf
+
+cell_type <- read.table("../data/new_batch/all_cell_types.txt", header = T)
+cell_type <- cell_type[colnames(htseq),]
+cell_type <- cell_type[1:10]
+is.one <- apply(cell_type, 1, function(x) names(which(x == 1)))
+cell_types <- is.one %>% map(function(x) paste(x, collapse = " "))
+cell_types <- unlist(cell_types)
+cell_types[which(cell_types == "")] <- "LTHSC_broad"
+cell_types[which(grepl("^MPP", cell_types))] <- "MPP"
+loop_types <- cell_types[which((cell_types %in% c("CMP_broad", "GMP_broad", "LMPP_broad")) | grepl("^MPP", cell_types))]
+loop_types <- names(loop_types)
+```
+
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+hvg <- hv.genes(tusi, 500)
+hvg <- rownames(tusi)[hvg]
+hvg_sym <- hvg[hvg %in% rownames(htseq)]
+
+# hvg <- hvg[-c(20, 44, 70, 98, 119, 127, 188, 189)]
+hvg <- intersect(hvg, rownames(tusi_bbm))
+#hvg <- hvg[!(hvg %in% outs)]
+df <- tusi_bbm[hvg,]
+# outs <- which(rowSds(data.matrix(df)) == 0)
+# hvg <- hvg[-outs]
+g <- ggm1(data = t(tusi_bbm[hvg,]), rho = 0.15)
+g$graph$network
+
+g <- ggm1(data = t(htseq[hvg,]), rho = 0.2)
+g$graph$network
+# 
+# g <- ggm1(data = t(htseq[hvg,]), rho = 0.2)
+# g$graph$network
+t.matrix <- abs(g$wi)
+t.matrix <- ifelse(t.matrix > 0.05, t.matrix, 0)
+diag(t.matrix) <- 0
+t.matrix <- data.frame(t.matrix)
+outs <- which(colSums(t.matrix, na.rm = T) == 0)
+t.matrix <- t.matrix[-outs, -outs]
+hvg <- hvg[-outs]
+t.matrix <- t(scale(t.matrix, center=FALSE, scale=colSums(t.matrix)))
+```
+
+
+
+```{r}
+ind <- which(cell_types %in% c("GMP_broad", "CMP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.8)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.8)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- colnames(df)[cf@i]
+
+ind <- which(cell_types %in% c("LTHSC_broad", "CMP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.6)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.6)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("LTHSC_broad", "LMPP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.7)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.7)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("CMP_broad", "LMPP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.7)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.7)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("MPP", "LMPP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.8, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.95)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.95)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("MPP", "CMP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.8, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.85)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.85)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("MEP_broad", "LTHSC_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.7)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.7)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+
+ind <- which(cell_types %in% c("MPP", "LTHSC_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.6)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.6)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+ind <- which(cell_types %in% c("LMPP_broad", "GMP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.6)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.6)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+
+ind <- which(cell_types %in% c("MPP", "GMP_broad"))
+df <- t(htseq)[ind,]
+df <- data.frame(df)
+train <- createDataPartition(cell_types[ind], p=0.75, list=FALSE)
+training <- df[train, ]
+testing <- df[-train, ]
+cv1 <- cv.glmnet(x = data.matrix(df), y = factor(cell_types[ind]), family = "binomial", nfold = 20, paralle = TRUE, alpha = 0.7)
+md1 <- glmnet(data.matrix(training), factor(cell_types[ind][train]), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.7)
+pred <- predict(md1, newx = data.matrix(testing), type = "class")
+table(pred, cell_types[ind][-train])
+sum(pred == cell_types[ind][-train])/length(pred)
+cf <- coef(md1)
+hvg <- c(hvg, colnames(df)[cf@i])
+
+hvg <- unique(hvg)
+hvg
+```
+
+
+
+# Euclidean Metric on Whole Data
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+d.matrix <- dist(t(htseq))
+write.csv(as.matrix(d.matrix), "../results/euc_htseq.csv")
+d.matrix <- read.csv("../results/euc_htseq.csv", row.names = 1)
+
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(htseq), col = cell_types), distance = as.dist(d.matrix))
+dpt <- DPT(dm)
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+```
+
+
+# GRN Metric on Whole Data
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+d.matrix <- dist.matrix(htseq[hvg, ], m = 1, k = 5)
+write.csv(as.matrix(d.matrix), "../results/hvg_cyto.csv")
+d.matrix <- read.csv("../results/hvg_cyto.csv", row.names = 1)
+
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(htseq), col = strsplit2(colnames(htseq), "_")[,1]), distance = as.dist(d.matrix))
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(htseq), col = cell_types), distance = as.dist(d.matrix))
+dpt <- DPT(dm)
+
+
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC4, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+
+
+df <- data.frame(DPT1 = dpt$DC3, DPT2 = dpt$DC4, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(3, 4))
+
+dim.reduce(data = d.matrix, method = "umap", annot1 = cell_types)
+dim.reduce(data = d.matrix, method = "tsne", annot1 = cell_types[loop_types])
+```
+
+# Euclidean Metric on Loop
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+d.matrix <- dist(t(htseq[, loop_types]))
+write.csv(as.matrix(d.matrix), "../results/euc_htseq_loop.csv")
+d.matrix <- read.csv("../results/euc_htseq_loop.csv", row.names = 1)
+# cell_types[which(grepl("^MPP", cell_types))] <- "MPP"
+
+dm <- DiffusionMap(data = data.frame(sample = loop_types, col = cell_types[loop_types]), distance = as.dist(d.matrix))
+dpt <- DPT(dm)
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+```
+
+
+# GRN Metric on Loop
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+d.matrix <- dist.matrix(htseq[hvg, loop_types], m = 1, k = 5)
+write.csv(as.matrix(d.matrix), "../results/ggm_htseq1_tusi_loop_hvg.csv")
+d.matrix <- read.csv("../results/ggm_htseq1_tusi_loop_hvg.csv", row.names = 1)
+
+
+outs <- which(d.matrix > 60, arr.ind = TRUE)
+outs <- outs[,1]
+outs <- table(outs)
+outs <- which(outs > 100)
+outs <- as.numeric(names(outs))
+
+
+outs <- which(cell_types == "GMP_broad")
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(htseq)[-outs], col = cell_types[-outs]), distance = as.dist(d.matrix[-outs, -outs]))
+dpt <- DPT(dm)
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+# df <- df[df$DPT3 < 0.1,]
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+
+
+dm <- DiffusionMap(data = data.frame(sample = loop_types[-outs], col = cell_types[loop_types][-outs]), distance = as.dist(d.matrix[-outs, -outs]))
+dpt <- DPT(dm)
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+# df <- df[df$DPT3 > -0.05,]
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+# df <- df[df$DPT3 > -0.05,]
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+
+
+
+
+
+outs <- which(cell_types[loop_types] == "CMP_broad")
+
+dm <- DiffusionMap(data = data.frame(sample = colnames(htseq)[-outs], col = cell_types[-outs]), distance = as.dist(d.matrix[-outs, -outs]))
+dpt <- DPT(dm)
+
+
+df <- data.frame(DPT1 = dpt$DC1, DPT2 = dpt$DC2, col = dpt$col)
+# df <- df[df$DPT2 < 0.05 & df$DPT2 > -0.02,]
+ggplot(df, aes(x = DPT1, y = DPT2, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 2))
+
+df <- data.frame(DPT2 = dpt$DC2, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT2, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(2, 3))
+
+df <- data.frame(DPT1 = dpt$DC1, DPT3 = dpt$DC3, col = dpt$col)
+ggplot(df, aes(x = DPT1, y = DPT3, color = col)) + geom_point()
+plot.DPT(dpt, dcs = c(1, 3))
+```
+
+
+
+
+
