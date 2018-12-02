@@ -1,0 +1,35 @@
+---
+title: "Exon usage"
+author: "Elyas"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+# Load library
+```{r, message=FALSE, warning=FALSE}
+library(tximport)
+library(biomaRt)
+library(DESeq2)
+library(limma)
+library(ggrepel)
+library(genefilter)
+library(pheatmap)
+library(Rtsne)
+library(grid)
+library(gridExtra)
+library(Vennerable)
+library(tidyverse)
+library(DEXSeq)
+```
+
+
+```{r}
+load("/Volumes/elihei/Internship/projects/TP53ness_ultimate/server/users/rabe/DEXSeq/objects/160922dxdAll.RData")
+load("/Volumes/elihei/Internship/projects/TP53ness_ultimate/server/users/rabe/_tmp/dxr.RData")
+load("/Volumes/elihei/Internship/projects/TP53ness_ultimate/server/projects/nct/cll/ProcessedData/RNAseq/objects/ddsrna_180717.RData")
+```
+
+
+
+

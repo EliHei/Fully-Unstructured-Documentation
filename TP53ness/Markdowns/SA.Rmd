@@ -1,0 +1,481 @@
+---
+title: "Survival Analysis"
+author: "Elyas Heidari"
+date: "9/6/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Packagees
+```{r packages, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(Vennerable)
+library(UpSetR)
+library(FDb.InfiniumMethylation.hg19)
+library(tidyverse)
+library(reshape2)
+library(limma)
+library(GenomicRanges)
+library(DESeq2)
+library(pROC)
+library(ggplot2)
+library(beeswarm)
+library(plyr)
+library(jyluMisc)
+library(glmnet)
+library(survival)
+library(survMisc)
+library(tidyverse) 
+library(org.Hs.eg.db)
+library(DESeq2)
+library(jyluMisc)
+library(reshape2)
+library(pROC)
+library(ggplot2)
+library(beeswarm)
+library(plyr)
+library(ggalt)
+library(ComplexHeatmap)
+library(VennDiagram)
+library(limma)
+library(Vennerable)
+library(survival)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(survminer)
+library(entropy)
+library(survMisc)
+library(glmnet)
+library(rms)
+library(grid)
+library(gridExtra)
+library(maxstat)
+library(visNetwork)
+```
+
+# Functions
+```{r funcitons, message=FALSE, warning=FALSE, paged.print=FALSE}
+labeler <- function(x){
+  x[x==0] <- "Res.WT"
+  x[x==1] <- "Sens.WT"
+  x[x==2] <- "Mut"
+  factor(x)
+}
+
+diff.cont <- function(df, cnt){
+  lev <- levels(factor(cnt))
+  design <- model.matrix(~0+factor(cnt))
+  colnames(design) <- c(as.character(lev[1]),as.character(lev[2]))
+  contrast <- makeContrasts(g0 - g1, levels = design)
+  fit <- lmFit(t(df), design)
+  fit <- contrasts.fit(fit, contrast)
+  fit <- eBayes(fit, 0.01)
+  tT <- topTable(fit, adjust="fdr", sort.by="B", number=10000)
+  tT
+}
+
+diff_count <- function(df1, df2, f){
+  df1 <- df1[rownames(df1) %in% rownames(df2),]
+  f_temp <- df2[rownames(df1), f]
+  tt <- diff.cont(df1, paste0("g",f_temp))
+}
+
+top_sel <- function(tt, frac = 0.1){
+  rownames(tt)[head(order(tt$adj.P.Val), (dim(tt)[1]*frac))]
+}
+
+enricher <- function(DEres, name, gmt){
+  to.ret <- list()
+  res <- data.matrix(DEres)
+  res <- data.frame(res)
+  res$symbol <- rownames(DEres)
+  res <- res %>% filter(P.Value < 0.05)
+  res$P.Value <- res$P.Value * sign(res$logFC)
+  res <- res %>% dplyr::select(P.Value, symbol) 
+  colnames(res)[1] <- "stat"
+  res <- res %>% arrange(desc(stat))
+  rownames(res) <- res$symbol
+  res$symbol <- NULL
+  rg <- runGSEA(inputTab = res, gmtFile = gmts[[gmt]])
+  # rg$Name <- gsub(paste0(name, "_"),"", rg$Name)
+  rg <- list(rg)
+  names(rg) <- name
+  to.ret$rg <- rg
+  to.ret$enBar <- plotEnrichmentBar(resTab = rg, pCut = .2, ifFDR = FALSE, setName = gmt)
+  to.ret
+}
+
+path.sel <- function(res){
+  colnames(res)[c(4,6)] <- c("p.up", "p.down")
+  res %>% dplyr::filter(p.up < 0.2 | p.down < 0.2) -> res
+  res$Name
+}
+
+sel.nut <- function(df, spl, nut, TP53, lambda, alpha){
+  md1 <-
+    glmnet(
+    data.matrix(df),
+    as.factor(TP53),
+    family = "binomial",
+    lambda = lambda,
+    alpha = alpha,
+    intercept=FALSE
+    )
+  
+  cf <- coef(md1)
+  imp <- colnames(df)[cf@i]
+  imp.df <- df[TP53 == 1,imp]
+    
+  md1 <-
+    glmnet(
+    data.matrix(imp.df),
+    as.factor(nut[TP53 == 1]),
+    family = "binomial",
+    lambda = lambda,
+    alpha = 1,
+    intercept = FALSE
+    )
+  cf <- coef(md1)
+  cf
+}
+
+sel.rate <- function(x){
+  sum(x != 0)
+}
+
+mean.rate <- function(x){
+  (mean(x != 0)) * ifelse(mean(x) > 0, 1, -1)
+}
+
+se <- function(x){
+  (sd(x != 0))
+}
+
+
+km <- function(response, time, endpoint, titlePlot = "KM plot", pval = NULL, stat = "median") { 
+  #function for km plot
+  survS <- data.frame(time = time,
+                      endpoint = endpoint)
+  if (length(levels(factor(response))) > 5){
+  if (stat == "maxstat") {
+    ms <- maxstat.test(Surv(time, endpoint)  ~ response, 
+                               data = survS,
+                               smethod = "LogRank",
+                               minprop = 0.2, 
+                               maxprop = 0.8, 
+                               alpha = NULL)
+    
+    survS$group <- factor(ifelse(response >= ms$estimate, "high", "low"))
+    
+  } else if (stat == "median") {
+    med <- median(response, na.rm = TRUE)
+    survS$group <- factor(ifelse(response < med, "low", "high"))
+  } else if (stat == "binary") {
+    survS$group <- factor(response)
+  }
+  }else{
+    survS$group <- factor(response)
+  }
+  
+  if (is.null(pval)) pval = TRUE
+  p <- ggsurvplot(survfit(Surv(time, endpoint) ~ group, data = survS), 
+                              data = survS, pval = TRUE,  conf.int = TRUE,
+
+                              ylab = "Fraction", xlab = "Time (years)", title = titlePlot,
+                  ggtheme = theme_bw() + theme(plot.title = element_text(hjust =0.5)))$plot
+  
+  p
+}
+```
+
+# Load Preprocessed Data
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# setwd("/Volumes/elihei/Internship/projects/TP53ness_ultimate/codes")
+load("data/metadata/patmeta_180504.RData")
+load("data/Objects/exprMat.RData")
+load("data/Objects/CPS1000.RData")
+load("data/Objects/ic50.RData")
+load("data/Objects/meth.RData")
+load("data/patAnnotation/survival_CPS1000.RData")
+```
+
+# Datasets
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+vennList <- Venn(list(metadata = patMeta$Patient.ID[!is.na(patMeta$TP53)], RNAseq = colnames(exprMat), CPS1000 = rownames(cps.data), methylation = rownames(meth.df)))
+Vennerable::plot(vennList, doWeights = F, type = "ellipses", show = list(Faces = FALSE))
+
+upset(fromList(list(metadata = patMeta$Patient.ID[!is.na(patMeta$TP53)], RNAseq = colnames(exprMat), CPS1000 = rownames(cps.data), methylation = rownames(meth.df), IC50 = rownames(ic50.data))), order.by = "freq", number.angles = 30, point.size = 3.5, line.size = 2, sets.bar.color = "orange")
+```
+
+# Preprocess Data
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+patMeta <- data.frame(patMeta)
+patMeta <- patMeta[!is.na(patMeta$TP53),]
+rownames(patMeta) <- patMeta$Patient.ID
+colnames(patMeta) <- make.names(colnames(patMeta))
+colnames(cps.data) <- make.names(colnames(cps.data))
+drug_meta <- merge(patMeta, cps.data, by = 0)
+rownames(drug_meta) <- drug_meta$Patient.ID
+exprMat <- data.frame(exprMat)
+```
+
+
+# Define Cut-off for Nutlin Resistency
+```{r}
+my_roc <- roc(predictor = drug_meta$Nutlin.3a, response = drug_meta$TP53)
+cut.off <- coords(my_roc, "best", ret = "threshold")
+cut.off
+
+plot.roc(
+  predictor = drug_meta$Nutlin.3a,
+  x = drug_meta$TP53,
+  print.auc = TRUE,
+  auc.polygon = F,
+  grid = c(0.1, 0.2),
+  grid.col = c("green", "red"),
+  max.auc.polygon = TRUE,
+  auc.polygon.col = "blue",
+  print.thres = TRUE)
+
+outliers <- rownames(drug_meta)[which(drug_meta$TP53 == 0 & drug_meta$Nutlin.3a >= cut.off)]
+  
+drug_meta$nut <- ifelse(rownames(drug_meta) %in% outliers, 1, 0)
+
+beeswarm <- beeswarm(
+  Nutlin.3a ~ TP53,
+  data = drug_meta,
+  method = 'swarm',
+  pwcol = as.numeric(drug_meta$TP53) - as.numeric(drug_meta$nut),
+  do.plot = F
+)[, c(1, 2, 4)]
+colnames(beeswarm) <- c("x", "y", "group")
+beeswarm$group <- labeler(beeswarm$group)
+
+
+beeswarm.plot <- ggplot(beeswarm, aes(x, y)) +
+  xlab("") +
+  scale_y_continuous(expression("Nutlin.3a Averaged")) + 
+  geom_boxplot(aes(x, y, group = ifelse(group %in% c("Res.WT", "Sens.WT"), "WT", "Mut")), outlier.shape = NA) +
+  geom_point(aes(colour = factor(group))) +
+  scale_x_continuous(
+  breaks = c(1:2),
+  labels = c("unmutated", "mutated"),
+  expand = c(0, 0.3)
+  ) + geom_segment(aes(
+    x = 0.8,
+    y = cut.off,
+    xend = 1.2,
+    yend = cut.off,
+    fill = "black"
+  ), linetype = "dashed") +
+  theme_bw() +
+  labs(x = "TP53", col = "annotation")
+
+beeswarm.plot
+```
+
+
+```{r}
+# sample.names <- intersect(rownames(drug_meta), colnames(exprMat))
+# feature.df <- cbind(drug_meta[sample.names,], t(exprMat[,sample.names]))
+# feature.df <- muvis::data_preproc(feature.df)
+# feature.df <- feature.df[,-5183]
+# mf <- muvis::min_forest(feature.df)
+
+```
+
+
+# Differential Analysis with Limma
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+drug_nut <- diff_count(cps.data, drug_meta[which(drug_meta$TP53 == 0),], "nut")
+drug_TP53 <- diff_count(cps.data, patMeta, "TP53")
+meth_nut <- diff_count(meth.df, drug_meta[which(drug_meta$TP53 == 0),], "nut")
+meth_TP53 <- diff_count(meth.df, patMeta, "TP53")
+expr_nut <- diff_count(t(exprMat), drug_meta[which(drug_meta$TP53 == 0),], "nut")
+expr_TP53 <- diff_count(t(exprMat), patMeta, "TP53")
+top_sel(drug_nut)
+top_sel(drug_TP53)
+top_meth_nut <- top_sel(meth_nut, 0.05)
+top_meth_TP53 <- top_sel(meth_TP53, 0.05)
+top_expr_nut <- top_sel(expr_nut, 0.05)
+top_expr_TP53 <- top_sel(expr_TP53, 0.05)
+top_drug_nut <- top_sel(drug_nut, 0.2)
+top_drug_TP53 <- top_sel(drug_TP53, 0.2)
+
+
+
+vennList <- Venn(list(methylation_nut = top_meth_nut , methylation_TP53 = top_meth_TP53, expression_nut = top_expr_nut, expression_TP53 = top_expr_TP53))
+Vennerable::plot(vennList, doWeights = F, type = "ellipses", show = list(Faces = FALSE))
+
+upset(fromList(list(methylation_nut = top_meth_nut , methylation_TP53 = top_meth_TP53, expression_nut = top_expr_nut, expression_TP53 = top_expr_TP53)), order.by = "freq", number.angles = 30, point.size = 3.5, line.size = 2, sets.bar.color = "blue")
+```
+
+# Drugs
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+drug.annotation <- read.csv("data/TP53/targetAnnotation_all.csv", sep = ";")
+drug.annotation$nameEMBL2016 <- gsub(x = drug.annotation$nameEMBL2016, pattern = " +", replacement = ".")
+
+
+drug.annotation_nut <- drug.annotation[drug.annotation$nameCPS1000 %in% top_drug_nut | drug.annotation$nameEMBL2016 %in% top_drug_nut,]
+targets_nut <- strsplit(as.character(drug.annotation_nut$target), ", ")
+targets_nut <- unlist(targets_nut)
+
+drug.annotation_TP53 <- drug.annotation[drug.annotation$nameCPS1000 %in% top_drug_TP53 | drug.annotation$nameEMBL2016 %in% top_drug_TP53,]
+targets_TP53 <- strsplit(as.character(drug.annotation_TP53$target), ", ")
+targets_TP53 <- unlist(targets_TP53)
+
+
+vennList <- Venn(list(drug_nut = targets_nut , drug_TP53 = targets_TP53))
+Vennerable::plot(vennList, doWeights = F, show = list(Faces = FALSE))
+
+upset(fromList(list(expression_nut = top_expr_nut, expression_TP53 = top_expr_TP53, drug_nut = targets_nut, drug_TP53 = targets_TP53)), order.by = "freq", number.angles = 30, point.size = 3.5, line.size = 2, sets.bar.color = "blue")
+
+# genes <- Reduce(union, list(expression_nut = top_expr_nut, expression_TP53 = top_expr_TP53, top_meth_nut, top_meth_TP53))
+
+DA.features <- Reduce(union, list(expression_nut = top_expr_nut, expression_TP53 = top_expr_TP53, top_meth_nut, top_meth_TP53, top_drug_nut, top_drug_nut))
+# sample.names <- intersect(rownames(drug_meta), colnames(exprMat))
+# feature.df <- cbind(drug_meta[sample.names,], t(exprMat[genes,sample.names]))
+# feature.df <- muvis::data_preproc(feature.df)
+# muvis::min_forest(feature.df[,-c(823:dim(feature.df)[2])])
+
+
+```
+
+
+# Gene Set Enrichment Analysis
+```{r fig.height=13, message=FALSE, warning=FALSE, paged.print=FALSE}
+gmts <- list(HALLMARK=system.file("extdata","h.all.v5.1.symbols.gmt",package="BloodCancerMultiOmics2017"),
+             ONCOGENIC=system.file("extdata","c6.all.v5.1.symbols.gmt", package="BloodCancerMultiOmics2017"),
+             KEGG=system.file("extdata","c2.cp.kegg.v5.1.symbols.gmt", package = "BloodCancerMultiOmics2017"))
+
+DEs <- list()
+DEs$expression$nut <- expr_nut
+DEs$expression$TP53 <- expr_TP53
+DEs$methylation$nut <- meth_nut
+DEs$methylation$TP53 <- meth_TP53
+pathways <- DEs %>% map(function(x) x %>% map(function(y) names(gmts) %>% map(function(z) enricher(y, z, z))))
+
+pathways <- names(DEs) %>% map(function(x) names(DEs[[x]]) %>% map(function(y) names(gmts) %>% map(function(z) enricher(DEs[[x]][[y]], paste(x, y), z)))) 
+pathways[[1]][[1]] %>% map(function(x) plot(x[["enBar"]]))
+pathways[[1]][[2]] %>% map(function(x) plot(x[["enBar"]]))
+pathways[[2]][[1]] %>% map(function(x) plot(x[["enBar"]]))
+pathways[[2]][[2]] %>% map(function(x) plot(x[["enBar"]]))
+resss <- 1:2 %>% map(function(x) 1:2 %>% map(function(y) 1:3 %>% map(function(z) path.sel(pathways[[x]][[y]][[z]]$rg[[1]]))))
+ress <- resss %>% map(function(x) x %>% map(function(y) unlist(y)))
+
+
+vennList <- Venn(list(methylation_nut = ress[[2]][[1]] , methylation_TP53 = ress[[2]][[2]], expression_nut = ress[[1]][[1]], expression_TP53 = ress[[1]][[2]]))
+Vennerable::plot(vennList, doWeights = F, type = "ellipses", show = list(Faces = FALSE))
+
+upset(fromList(list(methylation_nut = ress[[2]][[1]] , methylation_TP53 = ress[[2]][[2]], expression_nut = ress[[1]][[1]], expression_TP53 = ress[[1]][[2]])), order.by = "freq", number.angles = 30, point.size = 3.5, line.size = 2, sets.bar.color = "blue")
+
+Reduce(intersect, list(methylation_nut = ress[[2]][[1]] , methylation_TP53 = ress[[2]][[2]], expression_nut = ress[[1]][[1]], expression_TP53 = ress[[1]][[2]]))
+```
+
+
+# Analysis of Elastic Net Coefficients
+
+
+## With drugs
+200 runs
+```{r fig.height=13, message=FALSE, warning=FALSE, paged.print=FALSE}
+# fdf <- fdf[,!(colnames(fdf) %in% make.names(colnames(cps.data)))]
+sample.names <- intersect(rownames(drug_meta), colnames(exprMat))
+feature.df <- cbind(drug_meta[sample.names,], t(exprMat[,sample.names]))
+name <- rownames(feature.df)
+feature.df <- muvis::data_preproc(feature.df)
+rownames(feature.df) <- name
+
+# with drugs
+# fdf <- feature.df[,-c(5183,5184)]
+# lambdas <- (seq(0,2000,10)/100000) * 5 + 0.0001
+# cfs <- 1:200 %>% map(function(x) sel.nut(df = fdf[,-c(38, 5177)], nut = feature.df$nut, TP53 = feature.df$TP53, alpha = 0.8, lambda = lambdas[x], spl = 0.75)) %>% map(function(x) data.matrix(x)[,1])
+# means <- tapply(unlist(cfs), names(unlist(cfs)), mean)
+# ses <- tapply(unlist(cfs), names(unlist(cfs)), sd)
+# sel.rates <- tapply(unlist(cfs), names(unlist(cfs)), sel.rate)
+# ord <- order(means)
+# dat <- data.frame(feature = names(means)[ord], mean = means[names(means)[ord]], sel.rate = sel.rates[names(means)[ord]], ses = ses[names(means)[ord]])
+# dat <- dat[dat$mean != 0,]
+# #dat <- dat[-grep("ENS",dat$feature),]
+# dat %>% arrange(mean) -> dat
+# dat$feature <- factor(dat$feature, levels = dat$feature)
+# ggplot(dat, aes(x=feature, weight=mean, fill = sel.rate/dim(dat)[1])) + geom_bar() + coord_flip() +labs(y = "mean coefficient", fill = "selection frequency") 
+# ML.drug.p.features <- as.character(dat$feature)
+# write(ML.drug.p.features, "results/ML_drug.txt")
+ML.drug.p.features <- read.table("results/ML_drug.txt")
+ML.drug.p.features <- as.character(ML.drug.p.features$V1)
+```
+
+
+## Without Drugs
+200 runs
+```{r fig.height=13, message=FALSE, warning=FALSE, paged.print=FALSE}
+# without drugs
+# fdf <- fdf[,!(colnames(fdf) %in% make.names(colnames(cps.data)))]
+# cfs <- 1:200 %>% map(function(x) sel.nut(df = fdf[,-c(5112)], nut = feature.df$nut, TP53 = feature.df$TP53, alpha = 0.8, lambda = lambdas[x], spl = 0.75)) %>% map(function(x) data.matrix(x)[,1])
+# means <- tapply(unlist(cfs), names(unlist(cfs)), mean)
+# ses <- tapply(unlist(cfs), names(unlist(cfs)), sd)
+# sel.rates <- tapply(unlist(cfs), names(unlist(cfs)), sel.rate)
+# ord <- order(means)
+# dat <- data.frame(feature = names(means)[ord], mean = means[names(means)[ord]], sel.rate = sel.rates[names(means)[ord]], ses = ses[names(means)[ord]])
+# dat <- dat[dat$mean != 0,]
+# #dat <- dat[-grep("ENS",dat$feature),]
+# dat %>% arrange(mean) -> dat
+# dat$feature <- factor(dat$feature, levels = dat$feature)
+# ggplot(dat, aes(x=feature, weight=mean, fill = sel.rate/dim(dat)[1])) + geom_bar() + coord_flip() +labs(y = "mean value", fill = "selection frequency")
+# 
+# ML.drug.n.features <- as.character(dat$feature)
+# write(ML.drug.n.features, "results/ML.txt")
+ML.drug.n.features <- read.table("results/ML.txt")
+ML.drug.n.features <- as.character(ML.drug.n.features$V1)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+vennList <- Venn(list(DA = DA.features , ML_with_drug = ML.drug.p.features, ML_without_drug = ML.drug.n.features))
+Vennerable::plot(vennList, doWeights = F, type = "circles", show = list(Faces = FALSE))
+
+upset(fromList(list(DA = DA.features , ML_with_drug = ML.drug.p.features, ML_without_drug = ML.drug.n.features)), order.by = "freq", number.angles = 30, point.size = 3.5, line.size = 2, sets.bar.color = "blue")
+
+intersect(ML.drug.n.features, DA.features)
+intersect(ML.drug.p.features, DA.features)
+intersect(ML.drug.n.features, ML.drug.p.features)
+
+features1 <- Reduce(union, list(DA.features, ML.drug.p.features, ML.drug.n.features))
+```
+
+
+# Survival Analysis on Important features
+```{r fig.height=15, message=FALSE, warning=FALSE, paged.print=FALSE}
+surv <- cbind(survT, feature.df[survT$patientID,])
+fdf <- surv[surv$TP53 == 1,]
+to.rem <- which(fdf$OS == 0)
+fdf <- fdf[-to.rem,]
+fdf <- fdf[!is.na(fdf$OS) & !is.na(fdf$died) & !is.na(fdf$treatedAfter) & !is.na(fdf$TTT),]
+OS <- fdf$OS
+died <- fdf$died
+TTT <- fdf$TTT
+treatedAfter <- fdf$treatedAfter
+fdf <- fdf[,intersect(colnames(fdf), features1)]
+
+fdf <- fdf[,-c(1,2,dim(fdf)[2])]
+cv.fit <- cv.glmnet(data.matrix(fdf), Surv(as.double(TTT), treatedAfter), family="cox", maxit = 1000)
+fit <- glmnet(data.matrix(fdf), Surv(as.double(TTT), treatedAfter), family =  "cox", maxit = 1000)
+
+Coefficients <- coef(fit, s = cv.fit$lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients  <- Coefficients[Active.Index]
+
+
+Active.Index %>% map(function(i) km(as.numeric(fdf[,i]), TTT, treatedAfter, sprintf(paste0("Treatment: ", colnames(fdf)[i])), stat = "median")) -> plotList
+grid.arrange(grobs= plotList, ncol=2)
+```
+
+
+
+

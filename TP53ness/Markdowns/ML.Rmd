@@ -1,0 +1,63 @@
+---
+title: "Machine learning module"
+author: "Elyas Heidari"
+date: "9/5/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(caret)
+install.packages("h2o", repos=(c("http://s3.amazonaws.com/h2o-release/h2o/master/1497/R", getOption("repos"))))
+library(h2o)
+```
+
+
+
+```{r cars}
+levels(fdf$TP53) <- c("unmutated", "mutated")
+fdf <- apply(fdf,2,make.names)
+fdf <- data.frame(fdf)
+train <- createDataPartition(y = fdf$TP53, p = .75)
+train.df <- fdf[train[[1]],]
+test.df <- fdf[-train[[1]],]
+
+train.df <- Filter(function(x)(length(unique(x))>1), train.df)
+
+ctrl <- trainControl(
+  method = "repeatedcv", 
+  repeats = 5,
+  classProbs = TRUE, 
+  summaryFunction = twoClassSummary
+)
+
+colnames(fdf) <- make.names(colnames(fdf))
+
+plsFit <- train(
+  factor(TP53) ~ .,
+  data = train.df,
+  method = "glmnet",
+  alpha = 0.5,
+  trControl = ctrl,
+  metric = "ROC"
+)
+
+
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

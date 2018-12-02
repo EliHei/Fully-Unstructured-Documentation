@@ -1,0 +1,516 @@
+---
+title: "TP53ness: Multivariate Analysis"
+author: "Elyas Heidari"
+date: "9/3/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+
+```{r packages, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(biomaRt)
+library(tidyverse)
+library(muvis)
+library(reshape2)
+library(FDb.InfiniumMethylation.hg19)
+library(limma)
+library(visNetwork)
+library(ComplexHeatmap)
+library(pROC)
+library(ggplot2)
+library(beeswarm)
+library(ggalt)
+library(plyr)
+library(doParallel)
+library(foreach)
+library(glmnet)
+library(randomForest)
+library(caret)
+```
+
+
+# Funcitons
+```{r functions, message=FALSE, warning=FALSE, paged.print=FALSE}
+graph.vis <- function(g, col, shape){
+  shapes <- c("circle", "square", "triangle")
+  data <- toVisNetworkData(g)
+  nodes <- data$nodes
+  edges <- data$edges
+
+  nodes$group <- col
+  nodes$shape <- shapes[shape]
+  vs <-
+      visNetwork::visNetwork(nodes = nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+}
+
+```
+
+
+# Data 
+
+```{r data, message=FALSE, warning=FALSE, paged.print=FALSE}
+load("../data/metadata/patmeta_180504.RData")
+load("../data/CPS1000/CPS1000_180629.RData")
+load("../data/methylation/2017-07-30_meth450k_n147.RData")
+load("../data/methylation/patmeta.RData")
+load("../data/IC50screen/IC50_170823.RData")
+load("../data/RNASeq/ddsrna_180301.RData")
+```
+
+```{r}
+patMeta <- data.frame(patMeta)
+rownames(patMeta) <- patMeta$Patient.ID
+```
+
+## RNASeq
+```{r rnaseq, message=FALSE, warning=FALSE, paged.print=FALSE}
+# dds <- estimateSizeFactors(dds)
+# dds <- dds[,which(dds$diag == "CLL")]
+# dds <- dds[which(rowSums(counts(dds)) > 50),]
+# ensembl <-
+#   useEnsembl(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+# transAnno <-
+#   getBM(
+#   attributes = c(
+#   'ensembl_gene_id',
+#   'ensembl_transcript_id',
+#   'hgnc_symbol',
+#   'chromosome_name',
+#   'transcript_biotype'
+#   ),
+#   mart = ensembl
+#   )
+# transAnno <- filter(transAnno, hgnc_symbol != "")
+# geneAnno <- transAnno[match(rownames(dds), transAnno$ensembl_gene_id), c("chromosome_name", "hgnc_symbol")]
+# rownames(geneAnno) <- rownames(dds)
+# rowData(dds) <- geneAnno
+# rownames(dds)[!is.na(rowData(dds)[,2])] <- rowData(dds)[!is.na(rowData(dds)[,2]),2]
+# dds.vst <- varianceStabilizingTransformation(dds, blind = TRUE)
+# exprMat <- assay(dds.vst)
+# sds <- rowSds(exprMat)
+# exprMat <- exprMat[order(sds, decreasing = TRUE)[1:5000],]
+# save(exprMat, file = "../data/Objects/exprMat.RData")
+load("../data/Objects/exprMat.RData")
+exprMat <- data.frame(exprMat)
+```
+
+## Drug Screening 
+```{r}
+# cps.data <- pheno1000
+# cps.data <- cps.data %>% group_by(patientID, Drug) %>% summarise(mean(normVal.adj.sigm, na.rm = T))
+# colnames(cps.data)[3] <- "normVal"
+# cps.data <- dcast(cps.data, patientID ~ Drug)
+# cps.data <- cps.data[-dim(cps.data)[1],]
+# rownames(cps.data) <- cps.data$patientID
+# cps.data <- cps.data[,-1]
+# cps.data <- cps.data[-1,]
+# save(cps.data, file = "../data/Objects/CPS1000.RData")
+load("../data/Objects/CPS1000.RData")
+
+# ic50.data <- ic50
+# ic50.data <- ic50.data %>% group_by(patientID, Drug) %>% summarise(mean(normVal, na.rm = T))
+# colnames(ic50.data)[3] <- "normVal"
+# ic50.data <- dcast(ic50.data, patientID ~ Drug)
+# ic50.data <- ic50.data[-dim(ic50.data)[1],]
+# rownames(ic50.data) <- ic50.data$patientID
+# ic50.data <- ic50.data[,-1]
+# ic50.data <- ic50.data[-1,]
+# save(ic50.data, file = "../data/Objects/ic50.RData")
+load("../data/Objects/ic50.RData")
+```
+
+## Methylation
+```{r}
+ids <- strsplit(colData(meth450k_n147)$Sample_Name, "-")
+ids <- lapply(ids, function(x) x[2])
+ids <- unlist(ids)
+hm450 <- get450k()
+probenames <- rownames(meth450k_n147)
+probes <- hm450[probenames]
+transcripts <- getNearestTranscript(probes)
+transcript <- transcripts$nearestGeneSymbol
+meth.df <- assays(meth450k_n147)$Beta
+meth.df <- data.frame(meth.df)
+meth.df$transcript <- transcript
+meth.df <- aggregate(.~transcript, meth.df, mean)
+rownames(meth.df) <- meth.df$transcript
+meth.df <- meth.df[,2:dim(meth.df)[2]]
+colnames(meth.df) <- ids
+meth.df <- t(meth.df)
+meth.df <- data.frame(meth.df)
+meth.df$hipo <- ids
+meth.df <- aggregate(.~hipo, meth.df, mean)
+rownames(meth.df) <- meth.df$hipo
+rownames(patMeta) <- patMeta$HIPO.ID
+rownames(meth.df) <- patMeta[match(rownames(meth.df), patMeta$HIPO.ID), "Patient.ID"]
+meth.df <- meth.df[, -1]
+save(meth.df, file = "../data/Objects/meth.RData")
+load("../data/Objects/meth.RData")
+```
+
+## Genomics
+```{r}
+patMeta_pre <- data_preproc(patMeta)
+```
+
+
+## Merging
+```{r}
+ids <- Reduce(intersect, list(rownames(patMeta), rownames(cps.data), colnames(exprMat)))
+feature_df <- do.call(cbind, list(patMeta[ids,], cps.data[ids,], t(exprMat)[ids,]))
+colnames(feature_df) <- make.names(colnames(feature_df))
+fdf <- data_preproc(feature_df)
+fdf <- fdf[,colSums(is.na(fdf))<nrow(fdf)]
+```
+
+
+# Population Stratification
+
+## Dimensionality Reduciton
+
+
+### PCA
+```{r pca, message=FALSE, warning=FALSE, paged.print=FALSE}
+# dim_reduce(fdf, method = "pca", annot1 = fdf$nut)
+exp <- t(exprMat)
+dim_reduce(t(exprMat), method = "tsne", annot1 = unlist(c(exprMat["TP53",])), annot1.name = "TP53")
+dim_reduce(cps.data, method = "umap", annot1 = cps.data$`Nutlin-3a`, annot1.name = "nutlin3")
+dim_reduce(patMeta_pre, method = "pca", annot1 = patMeta_pre$IGHV.status)
+```
+
+### UMAP
+```{r pca, message=FALSE, warning=FALSE, paged.print=FALSE}
+dim_reduce(fdf, method = "umap", annot1 = fdf$nut, annot2 = fdf$IGHV.status)
+p <- dim_reduce(patMeta_pre, method = "umap", annot1 = patMeta_pre$IGHV.status, annot2 = patMeta_pre$Methylation_Cluster)
+plotly::ggplotly(p)
+```
+
+### tSNE
+```{r pca, message=FALSE, warning=FALSE, paged.print=FALSE}
+dim_reduce(fdf, method = "tsne", annot1 = fdf$Nutlin.3a, annot2 = fdf$TP53)
+dim_reduce(fdf, method = "tsne", annot1 = fdf$nut)
+```
+
+## Minforest
+```{r pca, message=FALSE, warning=FALSE, paged.print=FALSE}
+reps <- find_repres(data.frame(t(fdf)))
+mf <- min_forest(data.frame(t(fdf)))
+g <- mf$graph
+graph.vis(g, col = patMeta_pre$TP53, shape = patMeta_pre$Methylation_Cluster)
+
+```
+
+## Heatmap
+
+```{r}
+heat.map <- Heatmap(
+  fdf,
+  name = "value",
+  km = 1,
+  show_row_names = F,
+  show_column_names = F,
+  cluster_rows = T
+  )  + Heatmap(feature_df$IGHV.status,
+  name = "clusters",
+  width = unit(5, "mm"))
+
+heat.map
+```
+
+
+
+# Outlier Detection
+
+## ROC
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+my_roc <- roc(predictor = feature_df$Nutlin.3a, response = feature_df$TP53)
+cut.off <- coords(my_roc, "best", ret = "threshold")
+cut.off
+plot.roc(predictor = feature_df$Nutlin.3a, x = feature_df$Nutlin.3a, print.auc=TRUE, auc.polygon=F, grid=c(0.1, 0.2), grid.col=c("green", "red"), max.auc.polygon=TRUE, auc.polygon.col="blue", print.thres=TRUE)
+outliers <- rownames(feature_df)[which(feature_df$TP53 == 0 & feature_df$Nutlin.3a> cut.off-0.04)]
+outliers
+```
+
+In turn, the WT samples with the response value of more than cut-off will be specified as outliers and are suspected to have the TP53ness signatures. Those samples are indicated with in the red line in the figure bellow. 
+```{r }
+beeswarm <- beeswarm(Nutlin.3a ~ TP53, 
+            data = feature_df, method = 'swarm', pwcol = feature_df$TP53, do.plot = F)[,c(1,2,4,6)]
+colnames(beeswarm) <- c("x", "y", "Mutated", "Mutation") 
+
+
+beeswarm.plot <- ggplot(beeswarm, aes(x, y)) +
+  xlab("") +
+  scale_y_continuous(expression("Nutlin.3a Response"))
+
+beeswarm.plot2 <- beeswarm.plot + geom_boxplot(aes(x, y,
+  group = round_any(x, 1, round)), outlier.shape = NA)
+
+beeswarm.plot3 <- beeswarm.plot2 + geom_point(aes(colour = factor(Mutated))) +
+  scale_colour_manual(values = c("green", "blue")) + 
+  scale_x_continuous(breaks = c(1:2), 
+         labels = c("unmutated", "mutated"), expand = c(0, 0.5))
+
+beeswarm.plot4 <- beeswarm.plot3 + geom_segment(aes(x = 0.8, y = cut.off, xend = 1.2, yend = cut.off), linetype="dashed")
+
+feature_df.select <- beeswarm[beeswarm$x < 1.5 & beeswarm$y > cut.off + 0.03, ]
+
+beeswarm.plot5 <- beeswarm.plot4 + geom_encircle(aes(x=x, y=y), 
+                data=feature_df.select, 
+                color="red", 
+                size=2, 
+                expand=0.08)
+beeswarm.plot5 
+```
+
+# Exome Usage
+
+## IGV
+
+## DEXSeq
+
+# Multivariate Models
+
+## Elastic Net
+```{r}
+# LASSO WITH ALPHA = 1
+rownames(fdf) <- rownames(feature_df)
+fdf$nut <- ifelse(rownames(fdf) %in% outliers, "res", "sens")
+fdf$nut <- factor(fdf$nut)
+levels(fdf$TP53) <- c("unmutated", "mutated")
+train <- createDataPartition(y = fdf$TP53, p = .75)
+train.df <- fdf[train[[1]],]
+test.df <- fdf[-train[[1]],]
+
+cv1 <- cv.glmnet(x = data.matrix(fdf[,-5177]), y = factor(fdf$TP53), family = "binomial", nfold = 10, paralle = TRUE, alpha = 1)
+md1 <- glmnet(data.matrix(train.df[,-5177]), as.double(train.df$TP53), family = "binomial", lambda = cv1$lambda.1se, alpha = 1)
+pred <- predict(md1, newx = data.matrix(test.df[,-5177]), type = "response")
+pred <- ifelse(pred > 0.4, "mutated", "unmutated")
+accuracy <- table(pred, test.df$TP53)
+(sum(accuracy)-sum(diag(accuracy)))/sum(accuracy)
+
+
+
+cv1 <- cv.glmnet(x = data.matrix(fdf[,-c(38, 50, 5085, 5177, 5183)]), y = factor(fdf$nut), family = "binomial", nfold = 10, paralle = TRUE, alpha = 0.7)
+md1 <- glmnet(data.matrix(train.df[,-c(38, 50, 5085, 5177, 5183)]), as.double(train.df$nut), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.7)
+pred <- predict(md1, newx = data.matrix(test.df[,-c(38, 50, 5085, 5177, 5183)]), type = "response")
+pred <- ifelse(pred > 0.5, "sens", "res")
+accuracy <- table(pred, test.df$nut)
+accuracy
+sum(diag(accuracy))/sum(accuracy)
+imp <- colnames(fdf[,-c(38, 50, 5085, 5177, 5183)])[cf@i]
+plot(cf[imp,])
+
+
+
+
+cv1 <- cv.glmnet(data.matrix(fdf[,-38]), as.double(fdf$Nutlin.3a), family = "gaussian", nfold = 10, type.measure = "deviance", paralle = TRUE, alpha = 1)
+md1 <- glmnet(data.matrix(fdf[,-38]), as.double(fdf$Nutlin.3a), family = "gaussian", lambda = cv1$lambda.1se, alpha = 1)
+cf <- coef(md1)
+
+rownames(fdf) <- rownames(feature_df)
+cv1 <- cv.glmnet(data.matrix(fdf[,-38]), ifelse(rownames(fdf) %in% outliers, 1, 0), family = "binomial", nfold = 10, type.measure = "deviance", paralle = TRUE, alpha = 0.5)
+md1 <- glmnet(data.matrix(fdf[,-38]), ifelse(rownames(fdf) %in% outliers, 1, 0), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.5)
+cf <- coef(md1)
+
+
+library(ggplot2)
+dat <- data.frame(feature = imp, 
+                  coef = cf[imp,])
+ggplot(dat, aes(x=feature, weight=coef)) + geom_bar() + coord_flip()
+
+```
+
+
+### Continuous
+
+### Discrete
+
+## Minforest
+
+## Random Forest
+```{r}
+rf_nut <- randomForest(data.matrix(fdf), y = factor(ifelse(rownames(fdf) %in% outliers, 1, 0)), ntree=100)
+imp_nut <- rownames(rf_nut$importance)[order(desc(rf_nut$importance))]
+rf_nutlin <- randomForest(data.matrix(fdf), y = fdf$Nutlin.3a, ntree=100)
+imp_nutlin <- rownames(rf_nutlin$importance)[order(desc(rf_nutlin$importance))]
+rf_TP53 <- randomForest(data.matrix(fdf), y = factor(fdf$TP53), ntree=100)
+imp_TP53 <- rownames(rf_TP53$importance)[order(desc(rf_TP53$importance))]
+
+imp <- intersect(imp_nut[1:100], imp_TP53[1:100])
+imp <- intersect(imp_nutlin[1:100], imp_TP53[1:100])
+
+kol <- 1:dim(fdf)[2]
+train <- sample(kol,4/5*length(kol))
+test <- kol[!(kol %in% train)]
+lgs <- glm(TP53 ~ ., family = binomial, data = fdf[train, imp])
+predict(lgs, fdf[test,imp[-1]], type="response")
+predict(model, Test, type = "response")
+fitted <- glm.fit(x = fdf[test,imp[-1]], y = fdf[test, "TP53"])
+
+
+rf <- randomForest(data.matrix(fdf[,-5177]), y = factor(fdf$TP53), ntree=100)
+# LASSO WITH ALPHA = 1
+
+cv1 <- cv.glmnet(data.matrix(fdf[,-5177]), as.double(fdf$TP53), family = "binomial", nfold = 10, type.measure = "deviance", paralle = TRUE, alpha = 0.5)
+md1 <- glmnet(data.matrix(fdf[,-5177]), as.double(fdf$TP53), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.5)
+cf <- coef(md1)
+
+
+cv1 <- cv.glmnet(data.matrix(fdf[,-38]), as.double(fdf$Nutlin.3a), family = "gaussian", nfold = 10, type.measure = "deviance", paralle = TRUE, alpha = 1)
+md1 <- glmnet(data.matrix(fdf[,-38]), as.double(fdf$Nutlin.3a), family = "gaussian", lambda = cv1$lambda.1se, alpha = 1)
+cf <- coef(md1)
+
+rownames(fdf) <- rownames(feature_df)
+cv1 <- cv.glmnet(data.matrix(fdf[,-38]), ifelse(rownames(fdf) %in% outliers, 1, 0), family = "binomial", nfold = 10, type.measure = "deviance", paralle = TRUE, alpha = 0.5)
+md1 <- glmnet(data.matrix(fdf[,-38]), ifelse(rownames(fdf) %in% outliers, 1, 0), family = "binomial", lambda = cv1$lambda.1se, alpha = 0.5)
+cf <- coef(md1)
+
+imp <- colnames(fdf)[cf@i+1]
+
+
+
+
+fdf <- Filter(function(x)(length(unique(x))>1), fdf)
+train <- createDataPartition(fdf$nut, p=0.8, list=FALSE)
+training <- fdf[train, ]
+testing <- fdf[-train, ]
+mod_fit <- train(factor(nut) ~ .,  data=training, method="rf", family=binomial)
+pred <- predict(mod_fit, newdata=testing)
+accuracy <- table(pred, testing$nut)
+sum(diag(accuracy))/sum(accuracy)
+```
+
+
+
+# Feature Analysis ***
+
+## Gene Set Enrichment Analysis
+
+## Pathway Visualization
+
+## Methylation Check
+
+# MOFA ***
+
+
+# Discussion
+
+# Conclusion
+
+# Acknoledgement
+
+# Session Info
+
+
+
+
+
+```{r}
+cv1 <- cv.glmnet(x = data.matrix(fdf[,-c(38, 50, 5085, 5177, 5183)]), y = factor(fdf$TP53), family = "binomial", nfold = 10, paralle = TRUE, alpha = 0.2)
+md1 <- glmnet(data.matrix(fdf[,-c(38, 50, 5085, 5177, 5183)]), as.double(fdf$TP53), family = "binomial", lambda = 0.01, alpha = 0.2)
+cf <- coef(md1)
+imp <- colnames(fdf[,-c(38, 50, 5085, 5177, 5183)])[cf@i]
+
+imp.df <- fdf[fdf$TP53 == 1,imp]
+train <- createDataPartition(y = fdf[fdf$TP53 == 1,"nut"], p = .75)
+train.df <- imp.df[train[[1]],]
+test.df <- imp.df[-train[[1]],]
+cv1 <- cv.glmnet(x = data.matrix(imp.df), y = factor(fdf[fdf$TP53 == 1,"nut"]), family = "binomial", nfold = 10, paralle = TRUE, alpha = 1)
+md1 <- glmnet(data.matrix(train.df), as.factor(fdf[fdf$TP53 == 1,"nut"][train[[1]]]), family = "binomial", lambda = 0.01, alpha = 1)
+pred <- predict(md1, newx = data.matrix(test.df), type = "response")
+pred <- ifelse(pred > 0.65, "sens", "res")
+accuracy <- table(pred, as.factor(fdf[fdf$TP53 == 1,"nut"][-train[[1]]]))
+accuracy
+sum(diag(accuracy))/sum(accuracy)
+cf <- coef(md1)
+imp <- colnames(imp.df)[cf@i]
+plot(cf[imp,])
+
+as.factor(fdf[fdf$TP53 == 1,"nut"][train[[1]]])
+
+ord <- order(cf[imp,])
+dat <- data.frame(feature = imp, coef = cf[imp,])
+dat <- dat[ord,]
+dat$feature <- factor(dat$feature, levels = dat$feature)
+ggplot(dat, aes(x=feature, weight=coef)) + geom_bar() + coord_flip()
+```
+
+
+
+```{r}
+sel.nut <- function(df, spl, nut, TP53, lambda, alpha){
+  md1 <-
+    glmnet(
+    data.matrix(df),
+    as.double(TP53),
+    family = "binomial",
+    lambda = lambda,
+    alpha = alpha,
+    intercept=FALSE
+    )
+  
+  cf <- coef(md1)
+  imp <- colnames(df)[cf@i]
+  imp.df <- df[TP53 == "unmutated",imp]
+    
+  md1 <-
+    glmnet(
+    data.matrix(imp.df),
+    as.factor(nut[TP53 == "unmutated"]),
+    family = "binomial",
+    lambda = lambda,
+    alpha = 1,
+    intercept = FALSE
+    )
+  # pred <- predict(md1, newx = data.matrix(test.df), type = "response")
+  # pred <- ifelse(pred > 0.65, "sens", "res")
+  # accuracy <- table(pred, as.factor(fdf[fdf$TP53 == 1,"nut"][-train[[1]]]))
+  # accuracy
+  # sum(diag(accuracy))/sum(accuracy)
+  cf <- coef(md1)
+  cf
+}
+
+sel.rate <- function(x){
+  sum(x != 0)
+}
+
+mean.rate <- function(x){
+  (mean(x != 0)) * ifelse(mean(x) > 0, 1, -1)
+}
+
+se <- function(x){
+  (sd(x != 0))
+}
+
+fdf <- fdf[,!(colnames(fdf) %in% make.names(colnames(cps.data)))]
+
+lambdas <- ((0:20)/10000) * 5 + 0.001
+cfs <- 1:20 %>% map(function(x) sel.nut(df = fdf[,-c(5020, 5112, 5118)],nut = fdf$nut, TP53 = fdf$TP53, alpha = 0.5, lambda = lambdas[x], spl = 0.75)) %>% map(function(x) data.matrix(x)[,1])
+
+
+means <- tapply(unlist(cfs), names(unlist(cfs)), mean)
+ses <- tapply(unlist(cfs), names(unlist(cfs)), sd)
+sel.rates <- tapply(unlist(cfs), names(unlist(cfs)), sel.rate)
+
+
+ord <- order(means)
+dat <- data.frame(feature = names(means)[ord], mean = means[names(means)[ord]], sel.rate = sel.rates[names(means)[ord]], ses = ses[names(means)[ord]])
+dat <- dat[dat$mean != 0,]
+#dat <- dat[-grep("ENS",dat$feature),]
+dat %>% arrange(mean) -> dat
+dat$feature <- factor(dat$feature, levels = dat$feature)
+
+ggplot(dat, aes(x=feature, weight=mean, fill = sel.rate)) + geom_bar() + coord_flip()
+```
+
+

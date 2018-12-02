@@ -1,0 +1,639 @@
+---
+title: 'TP53ness'
+author: "Elyas Heidari"
+date: "8/1/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Motivation
+In this project we want to define **TP53ness** by introducing some biological signatures. Our approach is to consider the response to Nutlin-3a drug. Since, as one can see in fig(2) there is a significant difference of Nutlin-3a response between TP53 mutated samples and WTs. This phenomenon led us to the hypothesis that WT samples with quite high level of Nutlin-3a response can be assumed to have the TP53ness signatures (not mutated but act like mutated).  
+
+# Packages & Functions
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(tidyverse) 
+library(org.Hs.eg.db)
+library(DESeq2)
+library(jyluMisc)
+library(reshape2)
+library(pROC)
+library(ggplot2)
+library(beeswarm)
+library(plyr)
+library(ggalt)
+library(ComplexHeatmap)
+library(VennDiagram)
+library(limma)
+library(Vennerable)
+library(survival)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(survminer)
+library(entropy)
+library(survMisc)
+library(glmnet)
+library(rms)
+library(grid)
+library(gridExtra)
+library(maxstat)
+library(visNetwork)
+
+
+# Proper themes for ggplot2
+theme_Publication <- function(base_size = 14) {
+  (
+    ggthemes::theme_foundation(base_size = base_size)
+    + ggplot2::theme(
+      plot.title = ggplot2::element_text(
+        face = "bold",
+        size = ggplot2::rel(1.2),
+        hjust = 0.5
+      ),
+      text = ggplot2::element_text(),
+      panel.background = ggplot2::element_rect(colour = NA),
+      plot.background = ggplot2::element_rect(colour = NA),
+      panel.border = ggplot2::element_rect(colour = NA),
+      axis.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1)),
+      axis.title.y = ggplot2::element_text(angle = 90, vjust = 2),
+      axis.title.x = ggplot2::element_text(vjust = -0.2),
+      axis.line = ggplot2::element_line(colour = "black"),
+      axis.ticks = ggplot2::element_line(),
+      panel.grid.major = ggplot2::element_line(colour = "#f0f0f0"),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.key = ggplot2::element_rect(colour = NA),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.key.size = grid::unit(0.2, "cm"),
+      legend.spacing = grid::unit(0, "cm"),
+      legend.title = ggplot2::element_text(face = "italic"),
+      plot.margin = grid::unit(c(10, 5, 5, 5), "mm"),
+      strip.background = ggplot2::element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
+      strip.text = ggplot2::element_text(face = "bold")
+    )
+  )
+
+}
+
+scale_fill_Publication <- function(...) {
+  ggplot2::discrete_scale("fill", "Publication", scales::manual_pal(
+    values = c(
+      "#386cb0",
+      "#fdb462",
+      "#7fc97f",
+      "#ef3b2c",
+      "#662506",
+      "#a6cee3",
+      "#fb9a99",
+      "#984ea3",
+      "#ffff33"
+    )
+  ), ...)
+
+}
+
+scale_colour_Publication <- function(...) {
+  discrete_scale("colour",
+                 "Publication",
+                 scales::manual_pal(
+                   values = c(
+                     "#386cb0",
+                     "#fdb462",
+                     "#7fc97f",
+                     "#ef3b2c",
+                     "#662506",
+                     "#a6cee3",
+                     "#fb9a99",
+                     "#984ea3",
+                     "#ffff33"
+                   )
+                 ),
+                 ...)
+}
+```
+
+## Data Prepration
+We combine **transcriptome**, **drug-response** data, **methylome**, **genomic** data, and **survival** data in this analysis.
+```{r data, message=FALSE, warning=FALSE, paged.print=FALSE}
+# patient metadata: 
+# rna-seq data: 18.03.01 data
+# drug-screening data: CPS1000
+# methylation data: meth450k-n147 17.07.30 
+# survival data: 18.07.30 
+
+# Load data
+load("../data/RNASeq/ddsrna_180301.RData")
+load("../data/patAnnotation/survival_CPS1000.RData")
+load("../data/patAnnotation/patmeta_180730.RData")
+load("../data/methylation/2017-07-30_meth450k_n147.RData")
+load("../data/methylation/patmeta.RData")
+
+# Preprocessed data
+datasets <-
+  list.files("../data/Preprocessed/") %>% map(function(f)
+    read.table(
+      paste0("../data/Preprocessed/", f),
+      sep = ",",
+      header = T,
+      row.names = 1
+    )) 
+row.indices <- Reduce(intersect, datasets %>% map(rownames))
+feature.df <- do.call(cbind, datasets %>% map(function(x) x[row.indices,]))
+feature.df <- feature.df[colSums(!is.na(feature.df)) > 0]
+rownames(feature.df) <- row.indices
+feature.df <- Filter(function(x)(length(unique(x))>1), feature.df)
+```
+
+# ROC for best cut-off
+We use ROC to find the best cut-off to classify the samples into two classes of TP53-mutated and TP53-WT based on their Nutlin-3a response. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+my_roc <- roc(predictor = feature.df$Nutlin.3a, response = feature.df$TP53)
+cut.off <- coords(my_roc, "best", ret = "threshold")
+cut.off
+plot.roc(predictor = feature.df$`Nutlin.3a`, x = feature.df$TP53, print.auc=TRUE, auc.polygon=F, grid=c(0.1, 0.2), grid.col=c("green", "red"), max.auc.polygon=TRUE, auc.polygon.col="blue", print.thres=TRUE)
+outliers <- rownames(feature.df)[which(feature.df$TP53 == 1 & feature.df$`Nutlin.3a` > cut.off)]
+outliers
+```
+
+In turn, the WT samples with the response value of more than cut-off will be specified as outliers and are suspected to have the TP53ness signatures. Those samples are indicated with in the red line in the figure bellow. 
+```{r }
+beeswarm <- beeswarm(Nutlin.3a ~ TP53, 
+            data = feature.df, method = 'swarm', pwcol = feature.df$TP53, do.plot = F)[,c(1,2,4,6)]
+colnames(beeswarm) <- c("x", "y", "Mutated", "Mutation") 
+
+
+beeswarm.plot <- ggplot(beeswarm, aes(x, y)) +
+  xlab("") +
+  scale_y_continuous(expression("Nutlin.3a Response"))
+
+beeswarm.plot2 <- beeswarm.plot + geom_boxplot(aes(x, y,
+  group = round_any(x, 1, round)), outlier.shape = NA)
+
+beeswarm.plot3 <- beeswarm.plot2 + geom_point(aes(colour = factor(Mutated))) +
+  scale_colour_manual(values = c("green", "blue")) + 
+  scale_x_continuous(breaks = c(1:2), 
+         labels = c("unmutated", "mutated"), expand = c(0, 0.5))
+
+beeswarm.plot4 <- beeswarm.plot3 + geom_segment(aes(x = 0.8, y = cut.off, xend = 1.2, yend = cut.off), linetype="dashed")
+
+feature.df.select <- beeswarm[beeswarm$x < 1.5 & beeswarm$y > cut.off + 0.04, ]
+
+beeswarm.plot5 <- beeswarm.plot4 + geom_encircle(aes(x=x, y=y), 
+                data=feature.df.select, 
+                color="red", 
+                size=2, 
+                expand=0.08)
+beeswarm.plot5 + theme_Publication() + scale_fill_Publication()
+```
+
+```{r}
+gmts <- list(HALLMARK=system.file("extdata","h.all.v5.1.symbols.gmt",package="BloodCancerMultiOmics2017"),
+             ONCOGENIC=system.file("extdata","c6.all.v5.1.symbols.gmt", package="BloodCancerMultiOmics2017"),
+             KEGG=system.file("extdata","c2.cp.kegg.v5.1.symbols.gmt", package = "BloodCancerMultiOmics2017"))
+```
+
+```{r}
+feature.df$nut <- ifelse(feature.df$Nutlin.3a > cut.off, 2, 1)
+dds <- estimateSizeFactors(dds)
+dds <- dds[,which(colnames(dds) %in% rownames(feature.df))]
+dds <- dds[,which(dds$diag == "CLL")]
+dds$TP53 <- as.factor(feature.df[dds$PatID, "TP53"])
+dds$Methylation_Cluster <- as.factor(feature.df[dds$PatID, "Methylation_Cluster"])
+dds$IGHV <- as.factor(feature.df[dds$PatID, "IGHV.status"])
+dds$nut <- as.factor(feature.df[dds$PatID, "nut"])
+dds$TP53 <- droplevels(dds$TP53)
+dds$Methylation_Cluster <- droplevels(dds$Methylation_Cluster)
+dds$IGHV <- droplevels(dds$IGHV)
+dds$nut <- droplevels(dds$nut)
+dds <- dds[which(rowSums(counts(dds)) > 50),]
+```
+
+
+```{r}
+createInput <- function(DEres, pCut = 0.05, ifFDR = TRUE, rankBy = "stat") {
+  if (ifFDR) {
+    inputTab <- data.frame(DEres) %>% rownames_to_column(var = "symbol") %>% filter(padj <= pCut)
+  } else {
+    inputTab <- data.frame(DEres) %>% rownames_to_column(var = "symbol") %>%filter(pvalue <= pCut)
+  }
+  
+  dplyr::arrange(inputTab, pvalue) %>% dplyr::filter(!duplicated(symbol)) -> tmp
+  inputTab <- tmp %>% dplyr::select("symbol", rankBy) %>% data.frame(stringsAsFactors = FALSE)
+  rownames(inputTab) <- inputTab$symbol
+  inputTab$symbol <- NULL
+  colnames(inputTab) <- "stat"
+  return(inputTab)
+}
+
+ens2sym <- function(vec){
+  cols <- c("SYMBOL", "GENENAME")
+  mapping <- AnnotationDbi::select(org.Hs.eg.db, keys=vec, columns=cols, keytype="ENSEMBL")
+  mapping <- mapping %>% dplyr::group_by(ENSEMBL) %>% dplyr::summarize(sample(SYMBOL, 1)) 
+  colnames(mapping)[2] <- "SYMBOL"
+  rownames(mapping) <- mapping$ENSEMBL
+  to.ret <- mapping[vec,]$SYMBOL
+  names(to.ret) <- vec
+  to.ret
+}
+
+bar.plot <- function(res, file, name){
+  to.ret <- list()
+  rg <- runGSEA(inputTab = res, gmtFile = file)
+  # rg$Name <- gsub(paste0(name, "_"),"", rg$Name)
+  rg <- list(rg)
+  names(rg) <- name
+  to.ret$rg <- rg
+  enBar <- plotEnrichmentBar(resTab = rg, pCut = 0.1, ifFDR = FALSE, setName = name)
+  to.ret$enBar <- enBar
+  to.ret
+}
+
+box.plot <- function(df, x) {
+  ggplot(df, aes(x = TP53, y = gene), fill = TP53, col = TP53) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle(x) +
+  geom_point(aes(col = TP53), size = 1, position = position_jitterdodge())
+}
+
+
+analyze <- function(name, dds, fdf, design.formula, pCut = 0.05, lFCut = 1){
+  print(name)
+  to.ret <- list()
+  DESeq2::design(dds) <- design.formula
+  ddsCell <- DESeq(dds)
+  results.cell <- results(ddsCell, contrast = c(name, "1", "2"))
+  results.df <- as.data.frame(results.cell)
+  to.ret$results.df <- results.df
+  rdf <- results.df[results.df$padj <= pCut & abs(results.df$log2FoldChange) > lFCut, ]
+  rdf <- rdf[!is.na(rdf$padj),]
+  to.ret$rdf <- rdf
+  res <- createInput(results.df, pCut = 0.1, ifFDR = F)
+  res$SYMBOL <- ens2sym(rownames(res))[rownames(res)]
+  res <- res %>% dplyr::filter(!is.na(SYMBOL)) %>% dplyr::group_by(SYMBOL) %>% dplyr::summarize(stat = mean(stat))
+  res <- data.frame(res)
+  rownames(res) <- res$SYMBOL
+  res <- res[order(dplyr::desc(res$stat)),]
+  res <- res %>% dplyr::select(stat)
+  to.ret$res <- res
+  print("barplots")
+  to.ret$bar.plots <- names(gmts) %>% map(function(x) bar.plot(res, gmts[[x]], x)$enBar)
+  to.ret$rg <- names(gmts) %>% map(function(x) bar.plot(res, gmts[[x]], x)$rg)
+  fdf %>% arrange(desc(Nutlin.3a)) -> fdf
+  fens <- fdf[,colnames(fdf) %in% rownames(rdf)]
+  fens <- scale(fens)
+  genes <- ens2sym(colnames(fens))
+  genes <- genes[which(!is.na(genes))]
+  colnames(fens) <- genes[colnames(fens)]
+  plotList <- genes %>% map(function(x) box.plot(data.frame("gene"= fens[,x], "TP53" = factor(fdf[,"TP53"])), x))
+  print("boxplots")
+  to.ret$box.plots <- plotList
+
+  # fens <- fens[,which(!is.na(colnames(fens)))]
+  # to.ret$heat.map <- Heatmap(
+  #   fens,
+  #   name = "genes",
+  #   km = 1,
+  #   show_row_names = T,
+  #   show_column_names = T,
+  #   cluster_rows = FALSE
+  #   ) +
+  #   Heatmap(
+  #   fdf$Nutlin.3a,
+  #   name = "Nutlin",
+  #   width = unit(5, "mm"),
+  #   cluster_rows = FALSE
+  #   ) +
+  #   Heatmap(
+  #   fdf$Methylation_Cluster,
+  #   name = "Methylation_Cluster",
+  #   col = c("blue", "purple", "red"),
+  #   cluster_rows = FALSE
+  #   ) 
+
+  to.ret
+}
+
+plot.venn <- function(l1, l2, gs){
+  vn <- c("TP53", "nut")
+  inp <- list(l1, l2)
+  names(inp) <- vn
+  venn.diagram(x = inp, main = gs, filename = paste0(gs, ".png"),fill = c("red", "green"))
+}
+
+ins <- function(geneList1, geneList2, df1, df2, pCut, gsc){
+  colnames(df1)[c(4,6)] <- c("p.up", "p.down")
+  colnames(df2)[c(4,6)] <- c("p.up", "p.down")
+  df1 %>% dplyr::filter(p.up < pCut | p.down < pCut) -> df1
+  df2 %>% dplyr::filter(p.up < pCut | p.down < pCut) -> df2
+  rownames(df1) <- df1$Name
+  rownames(df2) <- df2$Name
+  gs <- intersect(df1$Name, df2$Name)
+  eg <- gs %>% map(function(x) gsc[[x]])
+  names(eg) <- gs
+  gs %>% map(function(x) plot.venn(intersect(eg[[x]], geneList1), intersect(eg[[x]], geneList2), x))
+  gs %>% map(function(x) intersect(intersect(eg[[x]], geneList1), intersect(eg[[x]], geneList2))) -> to.ret
+  names(to.ret) <- gs
+  to.ret
+}
+
+
+
+
+VKL <- function(data,
+                group1,
+                group2,
+                permute = 0,
+                levels = NULL) {
+  is.cat <- function(var) {
+    if(is.null(levels))
+      return(is.factor(var))
+    else
+      return(!length(unique(var[!is.na(var)])) > levels)
+  }
+  
+  kl.calc <- function(data, group1, group2) {
+    1:dim(data)[2] %>% map(function(x)
+      freq(data[, x], group1, group2))  %>% map(function(x)
+        abs(KL.plugin(x$group1, x$group2)) + abs(KL.plugin(x$group2, x$group1))) -> to.ret
+    return(unlist(to.ret))
+  }
+  freq <- function(vec, group1, group2) {
+    if (!is.cat(vec))
+      vec <-
+        cut(vec,
+            breaks = seq((min(vec) - .0000001), (max(vec) + .0000001), (max(vec) - min(vec) + .0000002) /
+                           levels),
+            labels = 1:levels)
+    to.ret <- list(group1 = c(), group2 = c())
+    levels(factor(vec)) %>% map(function(x)
+      list(group1 = max(1, sum(vec[group1] == x)), group2 = max(1, sum(vec[group2] == x)))) %>% map(function(x)
+        to.ret <<-
+          list(
+            group1 = c(to.ret$group1, x$group1),
+            group2 = c(to.ret$group2, x$group2)
+          )) -> na
+    return(to.ret)
+  }
+  
+  p.val <- function(x, vec) {
+    return(which(sort(vec, decreasing = T) < x)[1] / length(vec))
+  }
+  
+  
+  data <- data.frame(data)
+  group1.group2 <- c(group1, group2)
+  kl <-
+    kl.calc(data, group1.group2[1:length(group1)], group1.group2[(length(group1) + 1):length(group1.group2)])
+  if (permute > 0) {
+    kl.df <- data.frame()
+    1:permute %>% map(function(x)
+      shuffle(group1.group2)) %>% map(function(x)
+        list(group1 = x[1:length(group1)], group2 = x[(length(group1) + 1):length(x)])) %>% map(function(f)
+          kl.calc(data, f[[1]], f[[2]])) %>% map(function(x)
+            kl.df <<- rbind(kl.df, x)) -> na
+    
+    1:dim(kl.df)[2] %>% map(function(i)
+      p.val(kl[i], kl.df[, i])) -> kls
+    return(sort(data.frame(
+      KL = kl,
+      row.names = colnames(data),
+      p.value = unlist(kls)
+    ), decreasing = T))
+  }
+  return(data.frame(KL = kl, row.names = colnames(data)))
+}
+
+```
+
+```{r run_all, message=FALSE, warning=FALSE, paged.print=FALSE}
+params <- list()
+params$TP53 <- list(name = "TP53", fdf = feature.df, dds = dds, design.formula = ~ TP53 + IGHV)
+fdf <- feature.df[which(feature.df$TP53 == 1),]
+dds2 <- dds[,which(colnames(dds) %in% rownames(fdf))]
+fdf$nut.res <- ifelse(fdf$Nutlin.3a > cut.off , 2, 1)
+dds2$nut.res <- as.factor(fdf[dds2$PatID, "nut.res"])
+dds2$nut.res <- droplevels(dds2$nut.res)
+params$nut.res <- list(name = "nut.res", fdf = fdf, dds = dds2, design.formula = ~ nut.res + IGHV)
+results <- params %>% map(function(x) analyze(name = x$name, fdf = x$fdf, dds = x$dds, design.formula = x$design.formula))
+save(results, file = "../data/results_genes.RData")
+load("../data/results_genes.RData")
+```
+
+
+```{r}
+TP53.rdf <- results$TP53$rdf
+nut.rdf <- results$nut.res$rdf
+TP53.top <- results$TP53$results.df
+TP53.top <- TP53.top[TP53.top$padj < 0.05 & abs(TP53.top$log2FoldChange) > 1,]
+nut.top <- results$nut.res$results.df
+nut.top <- nut.top[!is.na(nut.top$padj),]
+nut.top <- nut.top[nut.top$padj < 0.1,]
+
+vennList<- Venn(list(TP53 = rownames(TP53.rdf), nut = rownames(nut.rdf)))
+gVenn <- compute.Venn(vennList, doWeights  = TRUE)
+plot(gVenn)
+```
+
+```{r}
+drugs <- datasets[[1]]
+genomic <- datasets[[3]]
+inter <- intersect(rownames(drugs), rownames(genomic))
+design <- model.matrix(~0+factor(genomic[inter, "TP53"]))
+colnames(design) <- c("mu","wt")
+contrast <- makeContrasts(mu - wt, levels = design)
+fit <- lmFit(t(drugs[inter,]), design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit, 0.01)
+tT1 <- topTable(fit, adjust="fdr", sort.by="B", number=length(inter))
+inter <- intersect(rownames(drugs), rownames(genomic[genomic$TP53 == 1,]))
+genomic[inter, "nut"] <- drugs[inter, "Nutlin.3a"] > cut.off
+design <- model.matrix(~0+factor(genomic[inter, "nut"]))
+colnames(design) <- c("sen", "res")
+contrast <- makeContrasts(sen - res, levels = design)
+fit <- lmFit(t(drugs[inter,]), design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit, 0.01)
+tT2 <- topTable(fit, adjust="fdr", sort.by="B", number=length(inter))
+drug.s <- intersect(rownames(tT1[tT1$adj.P.Val < 0.05,]), rownames(tT2[tT2$adj.P.Val < 0.05,]))
+plot.venn(rownames(tT1[tT1$adj.P.Val < 0.05,]), rownames(tT2[tT2$adj.P.Val < 0.05,]), "drugs")
+vennList<- Venn(list(TP53 = rownames(tT1[tT1$adj.P.Val < 0.05,]), nut = rownames(tT2[tT2$adj.P.Val < 0.05,])))
+gVenn <- compute.Venn(vennList, doWeights  = TRUE)
+plot(gVenn)
+drug.s
+```
+
+```{r}
+drugs <- datasets[[1]]
+genomic <- datasets[[3]]
+inter <- intersect(rownames(drugs), rownames(genomic))
+genomic <- genomic[inter,]
+drugs <- drugs[inter,]
+g1 <- which(genomic$TP53 == 1)
+g2 <- which(genomic$TP53 == 2)
+TP53.kl <- VKL(data = genomic, group1= g1, group2  = g2, permute = 0,levels = 20)
+TP53.names <- rownames(TP53.kl)
+TP53.names <- TP53.names[order(TP53.kl$KL)]
+g1 <- which(genomic$TP53 == 1 & drugs$Nutlin.3a > cut.off)
+g2 <- which(genomic$TP53 == 1 & drugs$Nutlin.3a < cut.off)
+nut.kl <- VKL(data = genomic, group1 = g1, group2 = g2,permute = 0, levels = 20)
+nut.names <- rownames(nut.kl)
+nut.names <- nut.names[order(nut.kl$KL)]
+plot.venn(tail(TP53.names,20), tail(nut.names,20), "genomic")
+vennList<- Venn(list(TP53 = tail(TP53.names,20), nut =tail(nut.names,20)))
+gVenn <- compute.Venn(vennList, doWeights  = TRUE)
+plot(gVenn)
+```
+
+
+```{r}
+drug.s <- intersect(rownames(tT1[tT1$adj.P.Val < 0.05,]), rownames(tT2[tT2$adj.P.Val < 0.05,]))
+genomic.s <- intersect(tail(TP53.names,50), tail(nut.names,50))
+gene.s <- intersect(rownames(TP53.rdf), rownames(nut.rdf))
+f <- c(drug.s, genomic.s, gene.s)
+f <- f[f!="NA"]
+genomic.s
+```
+
+
+
+```{r}
+surv <- cbind(survT, feature.df[survT$patientID,])
+fdf <- surv[surv$TP53 == 1,]
+to.rem <- which(fdf$OS == 0)
+fdf <- fdf[-to.rem,]
+fdf <- fdf[!is.na(fdf$OS) & !is.na(fdf$died) & !is.na(fdf$treatedAfter) & !is.na(fdf$TTT),]
+OS <- fdf$OS
+died <- fdf$died
+TTT <- fdf$TTT
+treatedAfter <- fdf$treatedAfter
+fdf1 <- fdf[, f]
+fdf1 <- data.matrix(fdf1)
+
+cv.fit <- cv.glmnet(fdf1, Surv(TTT, treatedAfter), family="cox", maxit = 1000)
+fit <- glmnet(fdf1, Surv(fdf$TTT, fdf$treatedAfter), family =  "cox", maxit = 1000)
+
+Coefficients <- coef(fit, s = cv.fit$lambda.min)
+Active.Index <- which(Coefficients != 0)
+Active.Coefficients  <- Coefficients[Active.Index]
+```
+
+
+```{r, fig.height=50}
+km <- function(response, time, endpoint, titlePlot = "KM plot", pval = NULL, stat = "median") { 
+  #function for km plot
+  survS <- data.frame(time = time,
+                      endpoint = endpoint)
+  
+  if (stat == "maxstat") {
+    ms <- maxstat.test(Surv(time, endpoint)  ~ response, 
+                               data = survS,
+                               smethod = "LogRank",
+                               minprop = 0.2, 
+                               maxprop = 0.8, 
+                               alpha = NULL)
+    
+    survS$group <- factor(ifelse(response >= ms$estimate, "high", "low"))
+    
+  } else if (stat == "median") {
+    med <- median(response, na.rm = TRUE)
+    survS$group <- factor(ifelse(response >= med, "high", "low"))
+  } else if (stat == "binary") {
+    survS$group <- factor(response)
+  }
+  
+  if (is.null(pval)) pval = TRUE
+  p <- ggsurvplot(survfit(Surv(time, endpoint) ~ group, data = survS), 
+                              data = survS, pval = TRUE,  conf.int = TRUE,
+
+                              ylab = "Fraction", xlab = "Time (years)", title = titlePlot,
+                  ggtheme = theme_bw() + theme(plot.title = element_text(hjust =0.5)))$plot
+  
+  p
+}
+
+fdf1 <- data.frame(fdf1)
+Active.Index %>% map(function(i) km(fdf1[,i], TTT, treatedAfter, sprintf(paste0("Treatment: ", colnames(fdf1)[i])), stat = "median")) -> plotList
+grid.arrange(grobs= plotList, ncol=2)
+
+
+
+p <- ggsurvplot(survfit(Surv(OS, died) ~ IGHV.status, data = fdf), 
+                              data = fdf, pval = TRUE,  conf.int = TRUE,
+
+                              ylab = "Fraction", xlab = "Time (years)", title = "IGHV",
+                  ggtheme = theme_bw() + theme(plot.title = element_text(hjust =0.5)))$plot
+p 
+```
+
+
+
+
+
+```{r}
+library(igraph)
+interactions <- read.table(file = "../data/TP53/string_interactions.tsv", sep = "\t")
+interactions <- interactions[c(1,2)]
+colnames(interactions) <- c("var1", "var2")
+interactions <- rbind(interactions, setNames(interactions[,c(2,1)], c("var1", "var2")))
+
+
+
+centralize <- function(df, center){
+  n_nodes <- length(unique(df[,1]))
+  core <- center
+  df.tmp <- data.frame()
+  while(length(core) < n_nodes){
+    df.tmp <- rbind(df.tmp, df[((df[,1] %in% core) & !(df[,2] %in% core)),])
+    core <- unique(c(core, as.character(df.tmp[,2])))
+  }
+  print(core)
+  df.tmp
+}
+dff <- centralize(interactions, "TP53")
+g <- graph_from_data_frame(dff, directed = F)
+plot(g)
+g <- graph.neighborhood(g, 1, "TP53")[[1]]
+data <- toVisNetworkData(g)
+data$nodes$group <- ifelse(data$nodes$id %in% c("ORC6", "CDC20", "RPA1", "PRKDC", "DEK", "CDKN2C", "PSMC3IP", "ALDOC", "SAP30",  "EDN2", "KDELR3", "SDC3", "TIPARP", "CHST3", "PPARGC1A", "SCARB1", "FOXO3", "IL6", "HDLBP", "EGR3", "LRIG1", "ZNF185", "KAZN", "TIPARP", "SCARB1", "FASN", "ELOVL5", "ELOVL5", "MAOA", "HPGD", "GPD1", "FASN", "CBR3", "LGALS1", "ERP29", "SCPEP1", "CCDC24", "INHBA", targets), 1, 2)
+visNetwork::visNetwork(nodes = data$nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+plot(g)
+
+
+
+
+results$TP53$res
+
+symbols <- ens2sym(intersect(rownames(TP53.top), rownames(nut.top)))
+
+
+drug.annotation <- read.csv("../data/TP53/targetAnnotation_all.csv", sep = ";")
+drug.annotation$nameEMBL2016 <- gsub(x = drug.annotation$nameEMBL2016, pattern = " +", replacement = ".")
+drug.annotation <- drug.annotation[drug.annotation$nameCPS1000 %in% drug.s | drug.annotation$nameEMBL2016 %in% drug.s,]
+targets <- strsplit(as.character(drug.annotation$target), ", ")
+targets <- unlist(targets)
+
+data$nodes$group <- ifelse(data$nodes$id %in% c(targets, symbols), 1, 2)
+visNetwork::visNetwork(nodes = data$nodes, edges = data$edges)  %>%
+      visNetwork::visOptions(highlightNearest = list(
+        enabled = TRUE,
+        degree = 1,
+        hover = TRUE
+      ))
+
+
+
+txt <- "ALDOC, SAP30,  EDN2, KDELR3, SDC3, TIPARP, CHST3, PPARGC1A, SCARB1, FOXO3, IL6, HDLBP, EGR3, LRIG1, ZNF185, KAZN, TIPARP, SCARB1, FASN, ELOVL5, ORC6, CDC20, RPA1, PRKDC, DEK, CDKN2C, PSMC3IP, ELOVL5, MAOA, HPGD, GPD1, FASN, CBR3, LGALS1, ERP29, GCNT1, CSGALNACT1, CEACAM6, INHBA, EGLN3, LIF, CLDN1, MAOA, IL4R, APOBEC3B, COL5A2, ALDOC, CDC20, MTHFD1, USP18, IFI30, SLC22A7, USP46, LIME1, GATA1, PLEK2, ACE, CDK6, CLDN3, HBA2, SCTR, MMP25, ACTN3, ERAS, MDN1, SLC47A1, GAP43, CCNB1IP1, RASGRP2, CAMKK1, HCK, ANKRD10, ACACB, ACTN3, MDN1, MGP, ERAS, CCNB1IP1, RASGRP2, TEX14, TIMP1, CBR3, ACACB, INHBA, TLN2, S100A3 ,PYCR1 ,ECT2 ,SRR ,SLC43A1, PRMT3, CDC20, CACNA1D, CACNA1C, UQCR11, MYL2, SEMA3G, ROBO3, SEMA6C, SEMA3D, EPHB6, EFNB2, ABLIM2, EFNA2, HRAS, CASP9, CASP9, TGFA, HRAS, FOXO3, CDK6"
+symbols <- strsplit(txt, " *, *")
+
+```
+

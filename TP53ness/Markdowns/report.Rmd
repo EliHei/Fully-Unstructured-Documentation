@@ -1,0 +1,176 @@
+---
+title: "TP53ness"
+author: "Elyas Heidari"
+date: "7/18/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+# Packages
+```{r packages}
+library(Questools)
+library(tidyverse)
+library(entropy)
+library(permute)
+library(caret)
+library(MASS)
+library(pheatmap)
+library("RColorBrewer")
+library(ComplexHeatmap)
+```
+
+
+```{r divi}
+divi <- function(data,
+                g1,
+                g2,
+                permute = 0,
+                levels = 5) {
+  is.cat <- function(var) {
+    !length(unique(var)) > levels
+  }
+  kl.calc <- function(data, g1, g2) {
+    1:dim(data)[2] %>% map(function(x)
+      freq(data[, x], g1, g2))  %>% map(function(x)
+        abs(KL.plugin(x$g1, x$g2)) + abs(KL.plugin(x$g2, x$g1))) -> to.ret
+    unlist(to.ret)
+  }
+  freq <- function(vec, g1, g2) {
+    if (!is.cat(vec))
+      vec <-
+        cut(vec,
+            breaks = seq((min(vec) - 0.00001), (max(vec) + .00001), (max(vec) - min(vec) + .00002) /
+                           levels),
+            labels = 1:levels)
+    to.ret <- list(g1 = c(), g2 = c())
+    levels(factor(vec)) %>% map(function(x)
+      list(g1 = max(1, sum(vec[g1] == x)), g2 = max(1, sum(vec[g2] == x)))) %>% map(function(x)
+        to.ret <<-
+          list(
+            g1 = c(to.ret$g1, x$g1),
+            g2 = c(to.ret$g2, x$g2)
+          )) -> na
+    to.ret
+  }
+  p.val <- function(x, vec) {
+    which(sort(vec, decreasing = T) < x)[1] / length(vec)
+  }
+  data <- data.frame(data)
+  g1.g2 <- c(g1, g2)
+  kl <-
+    kl.calc(data, g1.g2[1:length(g1)], g1.g2[(length(g1) + 1):length(g1.g2)])
+  if (permute > 0) {
+    kl.df <- data.frame()
+    1:permute %>% map(function(x)
+      shuffle(g1.g2)) %>% map(function(x)
+        list(g1 = x[1:length(g1)], g2 = x[(length(g1) + 1):length(x)])) %>% map(function(f)
+          kl.calc(data, f[[1]], f[[2]])) %>% map(function(x)
+            kl.df <<- rbind(kl.df, x)) -> na
+    
+    1:dim(kl.df)[2] %>% map(function(i)
+      p.val(kl[i], kl.df[, i])) -> kls
+    return(data.frame(
+      KL = kl,
+      row.names = colnames(data),
+      p.value = unlist(kls)
+    ))
+  }
+  return(data.frame(KL = kl, row.names = colnames(data)))
+}
+```
+
+
+# Data Preprocessing
+  
+
+## Load Data
+```{r data}
+datasets <-
+  list.files("../data/Preprocessed/") %>% map(function(f)
+  read.table(
+  paste0("../data/Preprocessed/", f),
+  sep = ",",
+  header = T,
+  row.names = 1
+  )) 
+
+row.indices <- Reduce(intersect, datasets %>% map(rownames))
+feature.df <- do.call(cbind, datasets %>% map(function(x) x[row.indices,]))
+feature.df <- feature.df[colSums(!is.na(feature.df)) > 0]
+feature.df <- data.preproc(feature.df)
+rownames(feature.df) <- row.indices
+feature.df <- Filter(function(x)(length(unique(x))>1), feature.df)
+```
+
+# (Pre)Visualization
+
+
+# Feature Importance 
+
+```{r minforest}
+kl.div <- divi(feature.df, which(feature.df$TP53 == 1), which(feature.df$TP53 == 2))
+imp.features <- head(rownames(kl.div)[order(desc(kl.div$KL))], 500)
+mf.features <- min.forest(feature.df[,imp.features])
+# mf.features$network
+# mf.samples <- min.forest(data.frame(t(feature.df[,imp.features])))
+# ggm.samples <- ggm(data = data.frame(t(feature.df[,imp.features])),methods = c("BIC"))
+
+```
+
+
+# Feature Clustering and Representative Selection
+```{r features}
+features.com <- mf.features$communities
+TP53.com <- features.com["TP53"]
+features.com <- features.com[which(features.com != TP53.com)]
+importer <- function(nodes, bets){
+  names(which.max(bets[nodes]))[c(1,2)]
+}
+unique(features.com) %>% map(function(x) importer(features.com[features.com == x], mf.features$betweenness)) -> imp.nodes
+imp.nodes <- unlist(imp.nodes)
+```
+
+
+# Classification
+```{r classification}
+y = feature.df$TP53
+X = feature.df[,c(imp.nodes, "Nutlin.3a")]
+index <- createDataPartition(y, p=0.7, list=FALSE)
+# model.lda<-train(x = X[index,],y = y[index], method = 'glmStepAIC',metric = "Accuracy")
+# pred_test<-predict(object = model.lda,newdata = X[-index,])
+# confusionMatrix(pred_test,factor(y[-index]))
+
+model.lda<-train(x = X[index,],y = y[index], method = 'bayesglm',metric = "Accuracy")
+pred_test<-predict(object = model.lda,newdata = X[-index,])
+confusionMatrix(pred_test,factor(y[-index]))
+
+model.lda<-train(x = X[index,],y = y[index], method = 'cforest',metric = "Accuracy")
+pred_test<-predict(object = model.lda,newdata = X[-index,])
+confusionMatrix(pred_test,factor(y[-index]))
+```
+
+
+
+```{r}
+Heatmap(X[, which(!(names(X) %in% c("Nutlin", "Methylation_Cluster")))], name = "genes", km = 5,
+    show_row_names = T, show_column_names = T) +
+Heatmap(X$Nutlin.3a, name = "Nutlin", width = unit(5, "mm")) +
+Heatmap(X$Methylation_Cluster, name = "Methylation_Cluster", width = unit(5, "mm")) + 
+Heatmap(feature.df$TP53, name = "TP53", width = unit(5, "mm")) 
+
+```
+
+
+```{r}
+divi(feature.df, which(feature.df$Nutlin.3a >0.9 & feature.df$TP53 == 1), which(feature.df$Nutlin.3a <0.9 & feature.df$TP53 == 1)) -> kl.divvv
+genes <- rownames(kl.divvv)[order(desc(kl.divvv$KL))]
+write(genes, "../data/featuers.txt")
+```
+

@@ -1,0 +1,274 @@
+---
+title: "TP53ness: RNASeq Analysis"
+author: "Elyas Heidari"
+date: "7/25/2018"
+output:
+  BiocStyle::html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading Packages
+```{r packages, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(RColorBrewer)
+library(ComplexHeatmap)
+library(reshape2)
+library(jyluMisc)
+library(VennDiagram)
+library(grid)
+library(gridExtra)
+```
+
+
+# Loading Data
+```{r load_data, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Raw RNASeq data
+load("../data/RNASeq/ddsrna_180301.RData")
+
+# Preprocessed data
+datasets <-
+  list.files("../data/Preprocessed/") %>% map(function(f)
+    read.table(
+      paste0("../data/Preprocessed/", f),
+      sep = ",",
+      header = T,
+      row.names = 1
+    )) 
+row.indices <- Reduce(intersect, datasets %>% map(rownames))
+feature.df <- do.call(cbind, datasets %>% map(function(x) x[row.indices,]))
+feature.df <- feature.df[colSums(!is.na(feature.df)) > 0]
+rownames(feature.df) <- row.indices
+feature.df <- Filter(function(x)(length(unique(x))>1), feature.df)
+
+# GMT files
+gmts <- list(HALLMARK=system.file("extdata","h.all.v5.1.symbols.gmt",package="BloodCancerMultiOmics2017"),
+             ONCOGENIC=system.file("extdata","c6.all.v5.1.symbols.gmt", package="BloodCancerMultiOmics2017"),
+             KEGG=system.file("extdata","c2.cp.kegg.v5.1.symbols.gmt", package = "BloodCancerMultiOmics2017"))
+
+```
+
+
+# Data Preprocessing
+```{r preproc, message=FALSE, warning=FALSE, paged.print=FALSE}
+feature.df$nut <- ifelse(feature.df$Nutlin.3a > 0.88, 2, 1)
+dds <- estimateSizeFactors(dds)
+dds <- dds[,which(colnames(dds) %in% rownames(feature.df))]
+dds <- dds[,which(dds$diag == "CLL")]
+dds$TP53 <- as.factor(feature.df[dds$PatID, "TP53"])
+dds$Methylation_Cluster <- as.factor(feature.df[dds$PatID, "Methylation_Cluster"])
+dds$nut <- as.factor(feature.df[dds$PatID, "nut"])
+dds$TP53 <- droplevels(dds$TP53)
+dds$Methylation_Cluster <- droplevels(dds$Methylation_Cluster)
+dds$nut <- droplevels(dds$nut)
+dds <- dds[which(rowSums(counts(dds)) > 50),]
+```
+
+
+# Functions
+```{r functions, message=FALSE, warning=FALSE, paged.print=FALSE}
+createInput <- function(DEres, pCut = 0.05, ifFDR = TRUE, rankBy = "stat") {
+  if (ifFDR) {
+    inputTab <- data.frame(DEres) %>% rownames_to_column(var = "symbol") %>% filter(padj <= pCut)
+  } else {
+    inputTab <- data.frame(DEres) %>% rownames_to_column(var = "symbol") %>%filter(pvalue <= pCut)
+  }
+
+  inputTab <- arrange(inputTab, pvalue) %>% filter(!duplicated(symbol)) %>% select_("symbol", rankBy) %>% data.frame(stringsAsFactors = FALSE)
+  rownames(inputTab) <- inputTab$symbol
+  inputTab$symbol <- NULL
+  colnames(inputTab) <- "stat"
+  return(inputTab)
+}
+
+# ens2sym <- function(df){
+#   cols <- c("SYMBOL", "GENENAME")
+#   mapping <- AnnotationDbi::select(org.Hs.eg.db, keys=rownames(df), columns=cols, keytype="ENSEMBL")
+#   mapping <- mapping %>% group_by(ENSEMBL) %>% summarize(sample(SYMBOL, 1)) 
+#   colnames(mapping)[2] <- "SYMBOL"
+#   rownames(mapping) <- mapping$ENSEMBL
+#   df$SYMBOL <- mapping[rownames(df),]$SYMBOL
+#   colnames(mapping)[2] <- "SYMBOL"
+#   df <- df %>% filter(!is.na(SYMBOL)) %>% group_by(SYMBOL) %>% summarize(stat = mean(stat))
+#   df <- data.frame(df)
+#   rownames(df) <- df$SYMBOL
+#   df <- df %>% dplyr::select(stat)
+#   df
+# }
+
+ens2sym <- function(vec){
+  cols <- c("SYMBOL", "GENENAME")
+  tmp <- vec
+  mapping <- AnnotationDbi::select(org.Hs.eg.db, keys=vec, columns=cols, keytype="ENSEMBL")
+  mapping <- mapping %>% group_by(ENSEMBL) %>% summarize(sample(SYMBOL, 1)) 
+  colnames(mapping)[2] <- "SYMBOL"
+  rownames(mapping) <- mapping$ENSEMBL
+  to.ret <- mapping[vec,]$SYMBOL
+  names(to.ret) <- vec
+  to.ret
+}
+
+bar.plot <- function(res, file, name){
+  to.ret <- list()
+  rg <- runGSEA(inputTab = res, gmtFile = file)
+  # rg$Name <- gsub(paste0(name, "_"),"", rg$Name)
+  rg <- list(rg)
+  names(rg) <- name
+  to.ret$rg <- rg
+  enBar <- plotEnrichmentBar(resTab = rg, pCut = 0.1, ifFDR = FALSE, setName = name)
+  to.ret$enBar <- enBar
+  to.ret
+}
+
+box.plot <- function(df, x) {
+  ggplot(df, aes(x = TP53, y = gene), fill = TP53, col = TP53) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle(x) +
+  geom_point(aes(col = TP53), size = 1, position = position_jitterdodge())
+}
+
+
+analyze <- function(name, dds, fdf, design.formula, pCut = 0.01, lFCut = 1){
+  print(name)
+  to.ret <- list()
+  DESeq2::design(dds) <- design.formula
+  ddsCell <- DESeq(dds)
+  results.cell <- results(ddsCell, contrast = c(name, "1", "2"))
+  results.df <- as.data.frame(results.cell)
+  rdf <- results.df[results.df$padj <= pCut & abs(results.df$log2FoldChange) > lFCut, ]
+  rdf <- rdf[!is.na(rdf$padj),]
+  res <- createInput(results.df, pCut = 0.1, ifFDR = F)
+  res$SYMBOL <- ens2sym(rownames(res))[rownames(res)]
+  res <- res %>% filter(!is.na(SYMBOL)) %>% group_by(SYMBOL) %>% summarize(stat = mean(stat))
+  res <- data.frame(res)
+  rownames(res) <- res$SYMBOL
+  res <- res[order(dplyr::desc(res$stat)),]
+  res <- res %>% dplyr::select(stat)
+  to.ret$res <- res
+  print("barplots")
+  to.ret$bar.plots <- names(gmts) %>% map(function(x) bar.plot(res, gmts[[x]], x)$enBar)
+  to.ret$rg <- names(gmts) %>% map(function(x) bar.plot(res, gmts[[x]], x)$rg)
+  fdf %>% arrange(desc(TP53)) -> fdf
+  fens <- fdf[,colnames(fdf) %in% rownames(rdf)]
+  fens <- scale(fens)
+  genes <- ens2sym(colnames(fens))
+  genes <- genes[which(!is.na(genes))]
+  colnames(fens) <- genes[colnames(fens)]
+  plotList <- genes %>% map(function(x) box.plot(data.frame("gene"= fens[,x], "TP53" = factor(fdf[,"TP53"])), x))
+  print("boxplots")
+  to.ret$box.plots <- plotList
+  # 
+  # fens <- fens[,which(!is.na(colnames(fens)))]
+  # to.ret$heat.map <- Heatmap(
+  #   fens,
+  #   name = "genes",
+  #   km = 1,
+  #   show_row_names = T,
+  #   show_column_names = T,
+  #   cluster_rows = FALSE
+  #   ) +
+  #   Heatmap(
+  #   fdf$Nutlin.3a,
+  #   name = "Nutlin",
+  #   width = unit(5, "mm"),
+  #   cluster_rows = FALSE
+  #   ) +
+  #   Heatmap(
+  #   fdf$Methylation_Cluster,
+  #   name = "Methylation_Cluster",
+  #   col = c("blue", "purple", "red"),
+  #   cluster_rows = FALSE
+  #   ) +
+  #   Heatmap(
+  #   fdf$TP53,
+  #   name = "TP53",
+  #   col = c("red", "blue"),
+  #   cluster_rows = FALSE
+  #   ) 
+  # 
+  to.ret
+}
+
+plot.venn <- function(l1, l2, gs){
+  vn <- c("TP53", "nut")
+  inp <- list(l1, l2)
+  names(inp) <- vn
+  venn.diagram(x = inp, main = gs, filename = paste0(gs, ".png"),fill = c("red", "green"))
+}
+
+ins <- function(geneList1, geneList2, df1, df2, pCut, gsc){
+  colnames(df1)[c(4,6)] <- c("p.up", "p.down")
+  colnames(df2)[c(4,6)] <- c("p.up", "p.down")
+  df1 %>% dplyr::filter(p.up < pCut | p.down < pCut) -> df1
+  df2 %>% dplyr::filter(p.up < pCut | p.down < pCut) -> df2
+  rownames(df1) <- df1$Name
+  rownames(df2) <- df2$Name
+  gs <- intersect(df1$Name, df2$Name)
+  eg <- gs %>% map(function(x) gsc[[x]])
+  names(eg) <- gs
+  gs %>% map(function(x) plot.venn(intersect(eg[[x]], geneList1), intersect(eg[[x]], geneList2), x))
+  gs %>% map(function(x) intersect(intersect(eg[[x]], geneList1), intersect(eg[[x]], geneList2))) -> to.ret
+  names(to.ret) <- gs
+  to.ret
+}
+
+#1:10 %>% map(function(x) print("KIRE KHAR"))
+```
+
+
+# Prepare results
+```{r run_all, message=FALSE, warning=FALSE, paged.print=FALSE}
+params <- list()
+params$TP53 <- list(name = "TP53", fdf = feature.df, dds = dds, design.formula = ~ TP53 + Methylation_Cluster)
+# params$nut <- list(name = "nut", fdf = feature.df, dds = dds, design.formula = ~ nut)
+fdf <- feature.df[which(feature.df$TP53 == 1),]
+dds2 <- dds[,which(colnames(dds) %in% rownames(fdf))]
+fdf$nut.res <- ifelse(fdf$Nutlin.3a > .88 , 2, 1)
+dds2$nut.res <- as.factor(fdf[dds2$PatID, "nut.res"])
+dds2$nut.res <- droplevels(dds2$nut.res)
+params$nut.res <- list(name = "nut.res", fdf = fdf, dds = dds2, design.formula = ~ nut.res + Methylation_Cluster)
+results <- params %>% map(function(x) analyze(name = x$name, fdf = x$fdf, dds = x$dds, design.formula = x$design.formula))
+#results[[3]]$heat.map
+```
+
+# Boxplots of DEGs between TP53mut and WT
+```{r boxplot, fig.height=120, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+plots <- results %>% map(function(x) x$enBar) %>% map(function(x) grid.arrange(grobs= x$box.plots, ncol=2, main=textGrob("BOXPLOT", gp=gpar(fontsize=20,font=3))))
+rgs <- results %>% map(function(x) x$rg)
+
+```
+
+# Barplots of Gene Set Enrichment Analysis
+```{r barplot, message=FALSE, warning=FALSE}
+results %>% map(function(x) x$bar.plots %>% map(plot))
+```
+
+# Heatmaps of DEGs
+```{r heatmap, message=FALSE, warning=FALSE, paged.print=FALSE, fig.width=25, fig.height=25}
+# results %>% map(function(x) x$heat.map)
+```
+
+
+```{r echo=TRUE}
+ens <- c("HALLMARK", "ONCOGENIC", "KEGG")
+TP53.gl <- rownames(results$TP53$res)
+nut.gl <- rownames(results$nut$res)
+1:length(ens) %>% map(function(i) ins(TP53.gl, nut.gl, results$TP53$rg[[i]][[ens[i]]], results$nut$rg[[i]][[ens[i]]], 0.05, loadGSC(gmts[[i]])$gsc)) -> genes
+genes
+```
+
+```{r pres}
+lf <- list.files(".")
+for(f in lf){
+  if(grepl("png", f)){
+    knitr::include_graphics(f)
+  }
+}
+```
+
